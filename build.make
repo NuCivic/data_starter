@@ -7,9 +7,8 @@ includes[dkan] = projects/dkan/build-dkan.make
 includes[data_story] = projects/data_story/data_story.make
 includes[data_disqus] = projects/data_disqus/data_disqus.make
 includes[data_workflow] = projects/data_workflow/data_workflow.make
+includes[visualization_entity] = projects/visualization_entity/visualization_entity.make
 
 ; Include desired modules, themes, or libraries here.
 projects[devel][version] = 1.x
 projects[devel][subdir] = contrib
-
-; Libraries

@@ -32,14 +32,7 @@ projects[og_moderation][subdir] = contrib
 projects[restws][version] = 2.1
 projects[restws][subdir] = contrib
 
-projects[views_bulk_operations][version] = 3.2
-projects[views_bulk_operations][subdir] = contrib
-
-projects[views_responsive_grid][version] = 1.3
-projects[views_responsive_grid][subdir] = contrib
-
 projects[schema][version] = 1.2
-projects[schema][patch][1237974] = http://drupal.org/files/schema-support-custom-types-1237974-48.patch
 projects[schema][subdir] = contrib
 
 projects[admin_menu][version] = 3.0-rc4
@@ -89,7 +82,7 @@ projects[nuboot][subdir] = contrib
 projects[nuboot][download][type] = git
 projects[nuboot][download][url] = https://github.com/NuCivic/nuboot.git
 projects[nuboot][download][branch] = 7.x-1.x
-;projects[nuboot][download][tag] = 7.x-1.1
+projects[nuboot][download][revision] = "fbd7ea2c2f1fa45a5f5a10b4215950940335879e"
 
 ; Libraries
 libraries[font_awesome][type] = libraries

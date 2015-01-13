@@ -54,5 +54,5 @@ subtrees:
   visualization_entity:
     path: visualization_entity
     uri: 'git@github.com:nucivic/visualization_entity.git'
-    branch: master
+    branch: nucivic_internal_206_recline_resource_reference
     message: 'visualization_entity subtree from git@github.com:nucivic/visualization_entity.git'

@@ -61,9 +61,7 @@
 
   Drupal.ajax.prototype.commands.viewsShowButtons = function (ajax, response, status) {
     $('div.views-edit-view div.form-actions').removeClass('js-hide');
-    if (response.changed) {
-      $('div.views-edit-view div.view-changed.messages').removeClass('js-hide');
-    }
+    $('div.views-edit-view div.view-changed.messages').removeClass('js-hide');
   };
 
   Drupal.ajax.prototype.commands.viewsTriggerPreview = function (ajax, response, status) {

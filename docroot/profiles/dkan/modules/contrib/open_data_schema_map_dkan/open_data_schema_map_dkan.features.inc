@@ -126,7 +126,7 @@ function open_data_schema_map_dkan_open_data_schema_apis_defaults() {
           'type' => '',
         ),
         'url' => array(
-          'value' => '[node:field-resources:Nth:field-link-api:url] || [node:field-resources:Nth:field_link_remote_file] || [node:field-resources:Nth:field-upload:url]',
+          'value' => '[node:field-resources:Nth:url]',
           'type' => '',
         ),
         'description' => array(
@@ -1253,7 +1253,7 @@ function open_data_schema_map_dkan_open_data_schema_apis_defaults() {
           'type' => '',
         ),
         'url' => array(
-          'value' => '[node:field-resources:Nth:field-link-api:url] || [node:field-resources:Nth:field_link_remote_file] || [node:field-resources:Nth:field-upload:url]',
+          'value' => '[node:field-resources:Nth:url]',
           'type' => '',
         ),
         'description' => array(
@@ -1443,7 +1443,7 @@ function open_data_schema_map_dkan_open_data_schema_apis_defaults() {
         'type' => 'string',
       ),
       'url' => array(
-        'value' => '[node:field-link-api:url] || [node:field_link_remote_file] || [node:field-upload:url]',
+        'value' => '[node:url]',
         'type' => 'string',
       ),
       'description' => array(

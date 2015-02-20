@@ -79,6 +79,7 @@
       if (settings.dkanPush && context.context) {
         var pos = $('#page').offset();
         $('html, body').animate({ scrollTop: pos.top}, 'fast');
+        console.log(settings.dkanPush);
         if (settings.dkanPush.lang) {
           window.history.pushState("", "", '/' + settings.dkanPush.lang + '/node/add/resource?dataset=' + settings.dkanPush.nid);
         }

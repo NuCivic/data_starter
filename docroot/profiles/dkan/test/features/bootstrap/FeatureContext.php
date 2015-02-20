@@ -8,22 +8,6 @@ require 'vendor/autoload.php';
 
 class FeatureContext extends DrupalContext
 {
-    
-    /**
-     * @Given /^I scroll to the top$/
-     */
-    public function iScrollToTheTop() {
-      $driver = $this->getSession()->getDriver();
-      // Wait two seconds for admin menu if using js.
-      if ($driver instanceof Selenium2Driver) {
-        $element = $driver.findElement(By.id("header"));
-        $actions = new Actions($driver);
-        $actions.moveToElement($element);
-        // actions.click();
-        $actions.perform();
-      }
-    }
-    
     /**
      * @Then /^I wait for the dialog box to appear$/
      */
@@ -124,10 +108,8 @@ class FeatureContext extends DrupalContext
         $session = $this->getSession();
         $element = $session->getPage()->find(
             'xpath',
-            $session->getSelectorsHandler()->selectorToXpath(
-              'xpath',
-              '//div[contains(@class, "leaflet-marker-pane")]//img[' . $num . ']'
-            )
+            $session->getSelectorsHandler()->selectorToXpath('xpath', '//img[contains(@style,"z-index: ' . $num . '")]')
+
         );
         if (null === $element) {
             throw new \InvalidArgumentException(sprintf('Cannot find map icon: "%s"', $num));

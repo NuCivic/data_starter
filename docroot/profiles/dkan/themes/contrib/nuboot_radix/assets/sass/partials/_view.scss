@@ -31,9 +31,16 @@
 .views-field-field-image img {
   display:block;
   height:auto;
-  margin:0 auto;
+  margin:0 auto 5px;
   max-width:220px;
   width:100%;
+}
+
+.view-user-profile-fields img {
+  height:auto;
+  margin:0 auto;
+  max-width:190px;
+  width:100%;  
 }
 
 .view-front-page-group-grid {

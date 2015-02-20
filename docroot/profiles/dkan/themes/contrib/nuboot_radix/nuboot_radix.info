@@ -49,6 +49,7 @@ stylesheets-conditional[IE 8][all][] = assets/stylesheets/ie8.css
 ;; Default Theme Settings
 ;;;;;;;;;;;;;;;;;;;;;
 
+settings[site_name] = Welcome to Dkan
 settings[toggle_logo] = 1
 settings[toggle_name] = 0
 settings[toggle_slogan] = 0

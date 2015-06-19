@@ -7,7 +7,10 @@ configure = admin/structure/feeds
 
 files[] = feeds_ui.test
 
-; Information added by drush on 2013-09-19
+
+; Information added by drush on 2015-06-19
 version = "7.x-2.0-alpha8+8-dev"
+core = "7.x"
 project = "feeds"
-datestamp = "1379632144"
+datestamp = "1434742563"
+

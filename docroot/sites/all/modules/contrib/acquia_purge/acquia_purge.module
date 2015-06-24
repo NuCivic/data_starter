@@ -1,0 +1,2246 @@
+<?php
+
+/**
+ * @file
+ * Acquia Purge, Top-notch Varnish purging on Acquia Cloud!
+ */
+
+/**
+ * The maximum number of paths to purge per batch step, this max will usually
+ * only be necessary on the command line where execution time is endless.
+ */
+define('ACQUIA_PURGE_MAX_ITEMS', 100);
+
+/**
+ * The max amount of outgoing HTTP requests that can be made during script
+ * execution time. Although always respected as outer limit, it will be lower
+ * in practice as PHP resource limits (max execution time) bring it further
+ * down. However, the maximum amount of requests will be higher on the CLI.
+ */
+define('ACQUIA_PURGE_MAX_REQUESTS', 100);
+
+/**
+ * The number of HTTP requests executed in parallel during purging.
+ */
+define('ACQUIA_PURGE_PARALLEL_REQUESTS', 6);
+
+/**
+ * The number of seconds before a purge attempt times out.
+ */
+define('ACQUIA_PURGE_REQUEST_TIMEOUT', 2);
+
+/**
+ * File on disk to store our state data in (if memcached disabled).
+ */
+define('ACQUIA_PURGE_STATE_FILE', 'public://acquia_purge_state.raw');
+
+/**
+ * Memcached key used to store our state data in (if enabled).
+ */
+define('ACQUIA_PURGE_STATE_MEMKEY', 'acquia_purge_state');
+
+/**
+ * Memcached bin used to store our state data in memcached (if enabled).
+ */
+define('ACQUIA_PURGE_STATE_MEMBIN', 'acquia_purge');
+
+/**
+ * Diagnostic severity levels: Informational.
+ */
+define('ACQUIA_PURGE_SEVLEVEL_INFO', -1);
+
+/**
+ * Diagnostic severity levels: Good condition.
+ */
+define('ACQUIA_PURGE_SEVLEVEL_OK', 0);
+
+/**
+ * Diagnostic severity levels: Warning condition, proceed but flag warning.
+ */
+define('ACQUIA_PURGE_SEVLEVEL_WARNING', 1);
+
+/**
+ * Requirement severity: Error condition, do not purge items in the queue.
+ */
+define('ACQUIA_PURGE_SEVLEVEL_ERROR', 2);
+
+/**
+ * Implements hook_init().
+ */
+function acquia_purge_init() {
+
+  // Do not trigger the on-screen purger if this path is blacklisted.
+  if (_acquia_purge_ui_path_blacklisted()) {
+    return;
+  }
+
+  // Trigger the on-screen purger if its enabled and if this user triggered it.
+  if (_acquia_purge_queue_is_user_purging()) {
+    _acquia_purge_ui_trigger_purge();
+  }
+}
+
+/**
+ * Implements hook_permission().
+ */
+function acquia_purge_permission() {
+  return array(
+    'purge on-screen' => array(
+      'title' => t('Purge on-screen'),
+      'description' => t('Process purges visually using a progress bar and '
+        . 'grant access to the editorial manual purge blocks.'),
+    ),
+  );
+}
+
+/**
+ * Implements hook_cron().
+ */
+function acquia_purge_cron() {
+
+  // If cron-based purging isn't specifically enabled, don't do anything.
+  if (_acquia_purge_get('acquia_purge_cron') !== TRUE) {
+    return;
+  }
+
+  // Stop invocation if we are not detecting Acquia Cloud heuristics.
+  if (!_acquia_purge_are_we_on_acquiacloud()) {
+    return;
+  }
+
+  // Acquire a lock and ensure nobody else is purging something.
+  if (!_acquia_purge_queue_lock()) {
+    return;
+  }
+
+  // Stop processing if any serious issues were found and log to watchdog.
+  if (!_acquia_purge_are_we_allowed_to_purge()) {
+    $err = _acquia_purge_get_diagnosis(ACQUIA_PURGE_SEVLEVEL_ERROR);
+    _acquia_purge_get_diagnosis_logged($err);
+    return;
+  }
+
+  // Retrieve the statistics and determine if processing is needed at all.
+  $stats = _acquia_purge_queue_stats();
+  if (!$stats['running']) {
+    return;
+  }
+
+  // Calculate how many iterations we need and start processing accordingly.
+  do {
+    $items = _acquia_purge_queue_pop('_acquia_purge_queue_processpurge');
+  } while (count($items));
+
+  // We are done so lets release the lock.
+  _acquia_purge_queue_lock(NULL);
+}
+
+/**
+ * Implements hook_menu().
+ */
+function acquia_purge_menu() {
+  $items = array();
+
+  // Declare our AJAX callbacks for on-screen queue processing.
+  $items['acquia_purge_ajax_processor'] = array(
+    'title' => 'Acquia Purge AJAX processor',
+    'page callback' => 'acquia_purge_ajax_processor',
+    'access callback' => '_acquia_purge_queue_is_user_purging',
+    'file' => 'acquia_purge.admin.inc',
+    'type' => MENU_CALLBACK,
+  );
+  $items['acquia_purge_ajax_autocomplete'] = array(
+    'type'              => MENU_CALLBACK,
+    'page callback'     => 'acquia_purge_autocomplete',
+    'access arguments'  => array('purge on-screen'),
+    'file' => 'acquia_purge.admin.inc',
+  );
+
+  // Turn Expire's configuration section into a tabbed interface and add a fake
+  // 'Performance' tab, which will redirect to core's form. Then add our full
+  // manual purge form as last tab.
+  $items['admin/config/system/expire/performance'] = array(
+    'type'              => MENU_LOCAL_TASK,
+    'title'             => 'Performance',
+    'weight'            => -20,
+    'page callback'     => 'drupal_goto',
+    'page arguments'    => array('admin/config/development/performance'),
+    'access arguments'  => array('administer site configuration'),
+  );
+  $items['admin/config/system/expire/default'] = array(
+    'title'            => 'Cache Expiration',
+    'type'              => MENU_DEFAULT_LOCAL_TASK,
+    'file path'         => drupal_get_path('module', 'expire'),
+    'weight'            => -5,
+  );
+  $items['admin/config/system/expire/manualpurge'] = array(
+    'type'              => MENU_LOCAL_TASK,
+    'title'             => 'Manual purge',
+    'page callback'     => 'drupal_get_form',
+    'page arguments'    => array('acquia_purge_manualpurge_form_full'),
+    'access arguments'  => array('administer site configuration'),
+    'file' => 'acquia_purge.admin.inc',
+  );
+
+  // We'll also do the opposite here, by replicating the tabs from above on
+  // core's 'Performance' tab, but by letting them redirect back to the 'Cache
+  // Expiration' and 'Manual purge' tabs as admin/config/system/expire.
+  $items['admin/config/development/performance/default'] = array(
+    'title'             => 'Performance',
+    'type'              => MENU_DEFAULT_LOCAL_TASK,
+    'file path'         => drupal_get_path('module', 'system'),
+    'weight'            => -5,
+  );
+  $items['admin/config/development/performance/expire'] = array(
+    'type'              => MENU_LOCAL_TASK,
+    'title'             => 'Cache Expiration',
+    'page callback'     => 'drupal_goto',
+    'page arguments'    => array('admin/config/system/expire'),
+    'access arguments'  => array('administer site configuration'),
+  );
+  $items['admin/config/development/performance/manualpurge'] = array(
+    'type'              => MENU_LOCAL_TASK,
+    'title'             => 'Manual purge',
+    'page callback'     => 'drupal_goto',
+    'page arguments'    => array(
+      'admin/config/system/expire/manualpurge'),
+    'access arguments'  => array('administer site configuration'),
+  );
+
+  return $items;
+}
+
+/**
+ * Implements hook_expire_cache().
+ */
+function acquia_purge_expire_cache($urls, $wildcards, $object_type, $object) {
+
+  // Check for errors once, but refuse operation during the entire request.
+  static $error;
+  if ($error) {
+    return;
+  }
+  if (is_null($error)) {
+    if (($error = !_acquia_purge_are_we_allowed_to_purge())) {
+      $errors = _acquia_purge_get_diagnosis(ACQUIA_PURGE_SEVLEVEL_ERROR);
+      _acquia_purge_get_diagnosis_logged($errors);
+
+      // Render all critical error conditions to screen, if we should at least.
+      if (_acquia_purge_ui_path_blacklisted() || (php_sapi_name() === 'cli')
+        || (!user_access('purge on-screen'))) {
+        return;
+      }
+      foreach ($errors as $i => $error) {
+        $errors[$i] = '<p>' . $error['description'] . '</p>';
+      }
+      drupal_set_message(
+        t("<p>The system cannot publicly refresh the changes you just made,
+          because of the following error conditions:</p>!items<p>Please
+          contact your system administrator or development partner!</p>",
+          array('!items' => theme('item_list', array('items' => $errors)))),
+        'error');
+      return;
+    }
+  }
+
+  // Add '<front>' to the list as empty strings don't pass validation.
+  if (in_array('', $urls)) {
+    $urls['<front>'] = '<front>';
+  }
+
+  // Now test every item against our strict validation checks.
+  foreach ($urls as $id => $path) {
+    if (_acquia_purge_input_validate($path)) {
+      unset($urls[$id]);
+    }
+
+    // Specifically trim ending slashes on paths originating from expire,
+    // see the explanation on https://www.drupal.org/node/2295741.
+    else {
+      $urls[$id] = rtrim($path, '/');
+    }
+  }
+
+  // Queue all paths that we received from Expire.
+  acquia_purge_purge_paths($urls);
+}
+
+/**
+ * Implements hook_form_BASE_FORM_ID_alter().
+ */
+function acquia_purge_form_expire_admin_settings_form_alter(&$form, &$form_state, $form_id) {
+  if (!isset($form['tabs']['status'])) {
+    return;
+  }
+  $form['tabs']['status']['#title'] = t('Acquia Purge overview');
+
+  // Remove 'expire_status' and 'expire_debug' from Expire's status tab as we
+  // really don't want users to change them, UNLESS they need to be changed.
+  $trouble = array(
+    (bool) variable_get('expire_include_base_url', EXPIRE_INCLUDE_BASE_URL),
+    (bool) variable_get('expire_debug', EXPIRE_DEBUG_DISABLED),
+    intval(variable_get('expire_status', EXPIRE_STATUS_DISABLED))
+      !== EXPIRE_STATUS_ENABLED_EXTERNAL,
+  );
+  if (!in_array(TRUE, $trouble)) {
+    unset($form['tabs']['status']['common']);
+    unset($form['tabs']['status']['debug']);
+  }
+
+  // Add a full-blown status report on how Acquia Purge is doing.
+  $diagnostics = _acquia_purge_get_diagnosis();
+  $form['tabs']['status']['ap_status'] = array(
+    '#markup' => theme('acquia_purge_status_report', $diagnostics),
+    '#type' => 'item',
+  );
+}
+
+/**
+ * Implements hook_block_info().
+ */
+function acquia_purge_block_info() {
+  return array(
+    'page' => array(
+      'info' => t('Manual purge form (current page)'),
+      'cache' => DRUPAL_NO_CACHE,
+      'status' => 0,
+      'weight' => 1,
+      'region' => 'sidebar_first',
+      'visibility' => BLOCK_VISIBILITY_NOTLISTED,
+      'properties' => array('administrative' => TRUE),
+    ),
+    'paths' => array(
+      'info' => t('Manual purge form (paths)'),
+      'cache' => DRUPAL_NO_CACHE,
+      'status' => 0,
+      'weight' => 1,
+      'region' => 'sidebar_first',
+      'visibility' => BLOCK_VISIBILITY_NOTLISTED,
+      'properties' => array('administrative' => TRUE),
+    )
+  );
+}
+
+/**
+ * Implements hook_block_view().
+ */
+function acquia_purge_block_view($delta = '') {
+
+  // Render one of the manual purge blocks.
+  if (in_array($delta, array('page', 'paths'))) {
+    if (!user_access('purge on-screen')) {
+      return array();
+    }
+    if ($_GET['q'] == 'admin/config/development/performance/manualpurge') {
+      return array();
+    }
+    if (!_acquia_purge_are_we_allowed_to_purge()) {
+      return array();
+    }
+
+    // Load acquia_purge.admin.inc to be able to call our form callback.
+    module_load_include('inc', 'acquia_purge', 'acquia_purge.admin');
+    return array(
+      'subject' => ($delta === 'paths') ? t('Purge paths') : NULL,
+      'content' => drupal_get_form("acquia_purge_manualpurge_form_$delta"),
+    );
+  }
+
+  return array();
+}
+
+/**
+ * Implements hook_theme().
+ */
+function acquia_purge_theme($existing, $type, $theme, $path) {
+  return array(
+    'acquia_purge_status_bar_widget' => array(
+      'variables' => array(
+        'total' => 0,
+        'remaining' => 0,
+        'good' => 0,
+        'bad' => 0,
+        'percent' => 100,
+        'running' => FALSE,
+        'purgehistory' => array()),
+      'file' => 'acquia_purge.admin.inc',
+    ),
+    'acquia_purge_status_report' => array(
+      'render element' => 'requirements',
+      'file' => 'acquia_purge.admin.inc',
+    ),
+    'acquia_purge_status_widget' => array(
+      'variables' => array(
+        'total' => 0,
+        'remaining' => 0,
+        'good' => 0,
+        'bad'  => 0,
+        'percent' => 100,
+        'running' => FALSE,
+        'purgehistory' => array()),
+      'file' => 'acquia_purge.admin.inc',
+    ),
+  );
+}
+
+/**
+ * Determine whether we are running on Acquia Cloud or not.
+ *
+ * @returns
+ *   A boolean expression indicating if we currently run on Acquia cloud.
+ */
+function _acquia_purge_are_we_on_acquiacloud() {
+  static $connected;
+
+  // Build our assertions logic and cache it statically.
+  if (is_null($connected)) {
+    $assertions = array(
+      is_array(variable_get('acquia_hosting_site_info', FALSE)),
+      (bool) count(_acquia_purge_get_balancers()),
+      (bool) _acquia_purge_get_site_name(),
+      (bool) _acquia_purge_get_site_group(),
+      function_exists('curl_init'),
+    );
+    $connected = !in_array(FALSE, $assertions);
+  }
+
+  return $connected;
+}
+
+/**
+ * Determine if critical error conditions exists disallowing purges.
+ *
+ * @returns
+ *   Boolean TRUE or FALSE indicating access.
+ */
+function _acquia_purge_are_we_allowed_to_purge() {
+  static $allowed_to_purge;
+
+  // Statically store if error conditions exists or not.
+  if (is_null($allowed_to_purge)) {
+    $errors = _acquia_purge_get_diagnosis(ACQUIA_PURGE_SEVLEVEL_ERROR);
+    $allowed_to_purge = !(count($errors) > 0);
+  }
+
+  return $allowed_to_purge;
+}
+
+/**
+ * Determine if its safe to use memcached based features.
+ *
+ * @returns
+ *   Boolean TRUE if we can, FALSE if not.
+ */
+function _acquia_purge_are_we_using_memcached() {
+  static $answer;
+  if (is_null($answer)) {
+    global $conf;
+    $answer = FALSE;
+
+    if (_acquia_purge_get('acquia_purge_memcache')) {
+      if (isset($conf['cache_default_class'])) {
+        if ($conf['cache_default_class'] === 'MemCacheDrupal') {
+          if (function_exists('dmemcache_get')) {
+            $answer = TRUE;
+          }
+        }
+      }
+    }
+  }
+  return $answer;
+}
+
+/**
+ * Turn a PHP variable into a string with data type information for debugging.
+ *
+ * @param mixed $symbols
+ *   Arbitrary PHP variable, preferably a associative array.
+ *
+ * @returns
+ *   A one-line comma separated string with data types as var_dump() generates.
+ */
+function _acquia_purge_export_debug_symbols($symbols) {
+
+  // Capture a string using PHPs very own var_dump() using output buffering.
+  ob_start();
+  var_dump($symbols);
+  $symbols = ob_get_clean();
+
+  // Clean up and reduce the output footprint for both normal and xdebug output.
+  if (extension_loaded('xdebug')) {
+    $symbols = trim(html_entity_decode(strip_tags($symbols)));
+    $symbols = drupal_substr($symbols, strpos($symbols, "\n") + 1);
+    $symbols = str_replace("  '", '', $symbols);
+    $symbols = str_replace("' =>", ':', $symbols);
+    $symbols = implode(', ', explode("\n", $symbols));
+  }
+  else {
+    $symbols = strip_tags($symbols);
+    $symbols = drupal_substr($symbols, strpos($symbols, "\n") + 1);
+    $symbols = str_replace('  ["', '', $symbols);
+    $symbols = str_replace("\"]=>\n ", ':', $symbols);
+    $symbols = rtrim($symbols, "}\n");
+    $symbols = implode(', ', explode("\n", $symbols));
+  }
+
+  // To reduce bandwidth and storage needs we shorten data type indicators.
+  $symbols = str_replace(' string', 'S', $symbols);
+  $symbols = str_replace(' int', 'I', $symbols);
+  $symbols = str_replace(' float', 'F', $symbols);
+  $symbols = str_replace(' boolean', 'B', $symbols);
+  $symbols = str_replace(' bool', 'B', $symbols);
+  $symbols = str_replace(' null', 'NLL', $symbols);
+  $symbols = str_replace(' NULL', 'NLL', $symbols);
+  $symbols = str_replace('length=', 'l=', $symbols);
+
+  // Return the resulting string.
+  return $symbols;
+}
+
+/**
+ * Retrieve a variable or state data property.
+ *
+ * This function exists to prevent a wilderness of calls to variable_get()
+ * and _acquia_purge_state_get() but *especially* to keep all their defaults
+ * in one place. Having default values centralized means less risk on bugs,
+ * which is exactly why Drupal 8 fixes this with defaults in CMI.
+ *
+ * @param string $name
+ *   The name of the state data property OR variable to return.
+ * @param boolean $get_default
+ *   Optional, retrieve the default value instead of the real value.
+ *
+ * @see variable_get()
+ * @see _acquia_purge_state_get()
+ * @returns
+ *   Either the default or actual value of the item request.
+ */
+function _acquia_purge_get($name, $get_default = FALSE) {
+  static $names;
+
+  // Document all names that are in use.
+  if (is_null($names)) {
+    $names = array(
+      'variables' => array(
+        'acquia_purge_domains'     => FALSE,
+        'acquia_purge_cron'        => FALSE,
+        'acquia_purge_http'        => TRUE,
+        'acquia_purge_https'       => FALSE,
+        'acquia_purge_base_path'   => base_path(),
+        'acquia_purge_log_success' => TRUE,
+        'acquia_purge_variations'  => TRUE,
+        'acquia_purge_memcache'    => TRUE,
+      ),
+      'state' => array(
+        'qtotal'        => 0,
+        'qgood'         => 0,
+        'qbad'          => 0,
+        'locked'        => FALSE,
+        'queued'        => array(),
+        'purged'        => array(),
+        'uiusers'       => array(),
+        'logged_errors' => array(),
+      ),
+
+    );
+  }
+
+  // Now return the requested item, or their defaults as documented.
+  if (isset($names['variables'][$name])) {
+    if ($get_default) {
+      return $names['variables'][$name];
+    }
+    return variable_get($name, $names['variables'][$name]);
+  }
+  if (isset($names['state'][$name])) {
+    if ($get_default) {
+      return $names['state'][$name];
+    }
+    return _acquia_purge_state_get($name, $names['state'][$name]);
+  }
+
+  // Code should never get here, but if it does, throw exceptions.
+  throw new Exception("_acquia_purge_get: invalid variable '$name'!");
+}
+
+/**
+ * Get a list of load balancer IP addresses in front of this Acquia Cloud site.
+ *
+ * @warning
+ *   Please note that the returned IP addresses are internal addresses.
+ *
+ * @returns
+ *   Array with string values pointing to every Acquia Cloud load balancer.
+ */
+function _acquia_purge_get_balancers() {
+  static $balancers;
+
+  // Cache the results statically, preventing multiple lookups during runtime.
+  if (is_null($balancers)) {
+    $balancers = array();
+    foreach (variable_get('reverse_proxies', array()) as $ip_address) {
+      $balancers[] = $ip_address;
+    }
+  }
+
+  return $balancers;
+}
+
+/**
+ * Calculate how many items can be purged during the execution of this script.
+ *
+ * @param int $subtract
+ *   Optional integer value to subtract from the initially calculated value, so
+ *   passing the number of popped items in from _acquia_purge_queue_pop() will
+ *   lead this return value being updated the next time its requested.
+ *
+ * @see ACQUIA_PURGE_MAX_ITEMS
+ * @returns int
+ *   Integer indicating how many items may be popped from the queue.
+ */
+function _acquia_purge_get_capacity($subtract = NULL) {
+  static $capacity;
+  if (is_null($capacity)) {
+    $requests_per_item = _acquia_purge_get_capacity_factor();
+    $max_requests = _acquia_purge_get_capacity_maxrequests();
+
+    // Divide the maximum amount of requests through the number of requests we
+    // need per item to get to the capacity.
+    $capacity = intval($max_requests / $requests_per_item);
+
+    // In scenarios with many balancers or many domains it might happen that even
+    // one item will trigger more HTTP requests than we can handle. To prevent
+    // not purging anything anymore we will always purge one at minimum.
+    if ($capacity < 1) {
+      $capacity = 1;
+    }
+
+    // Cap the capacity if our calculation is higher than the maximum.
+    if ($capacity > ACQUIA_PURGE_MAX_ITEMS) {
+      $capacity = ACQUIA_PURGE_MAX_ITEMS;
+    }
+  }
+  if ($capacity && $subtract) {
+    $capacity = $capacity - $subtract;
+  }
+  return $capacity;
+}
+
+/**
+ * Calculate the slowdown factor based on configuration.
+ *
+ * @returns int
+ *   Integer that represents how many HTTP requests will have to be made for a
+ *   single item to be successfully purged. The lower this is, the better.
+ */
+function _acquia_purge_get_capacity_factor() {
+  static $slowdown_factor;
+  if (is_null($slowdown_factor)) {
+    $balancers = count(_acquia_purge_get_balancers());
+    $domains = count(_acquia_purge_get_domains());
+    $schemes = count(_acquia_purge_get_protocol_schemes());
+
+    // Multiply all configuration actors with each other.
+    $slowdown_factor = $schemes * $domains * $balancers;
+  }
+  return $slowdown_factor;
+}
+
+/**
+ * Calculate the maximum amount of outgoing HTTP requests we can make.
+ *
+ * @see ACQUIA_PURGE_REQUEST_TIMEOUT
+ * @see ACQUIA_PURGE_MAX_REQUESTS
+ * @returns int
+ *   Integer representing how many outgoing HTTP requests we can afford to make
+ *   during the current script execution. Usually it will be higher on the CLI
+ *   and in general this value will be on the safe side, as it assumes each
+ *   request to last as long as ACQUIA_PURGE_REQUEST_TIMEOUT takes place.
+ */
+function _acquia_purge_get_capacity_maxrequests() {
+  static $max_requests;
+  if (is_null($max_requests)) {
+
+    // Get the outer limits, usually only applicable through Drush/CLI.
+    $max_execution_time = (int) ini_get('max_execution_time');
+    $max_requests = ACQUIA_PURGE_MAX_REQUESTS;
+
+    // But if there is a max execution time, cut 20% from it and go lower.
+    if ($max_execution_time != 0) {
+      $max_execution_time = intval(0.8 * $max_execution_time);
+
+      // Calculate how many HTTP requests we should be able to do with the
+      // used parallel processing and set timeout values.
+      $max_requests = $max_execution_time / ACQUIA_PURGE_REQUEST_TIMEOUT;
+      $max_requests = ACQUIA_PURGE_PARALLEL_REQUESTS * $max_requests;
+
+      // That value's usually higher than the outer cap, so use that if needed.
+      if ($max_requests > ACQUIA_PURGE_MAX_REQUESTS) {
+        $max_requests = ACQUIA_PURGE_MAX_REQUESTS;
+      }
+    }
+  }
+  return $max_requests;
+}
+
+/**
+ * Perform a series of self-tests against the site and our purging conditions.
+ *
+ * @param int $verbosity
+ *   Optional, the level of diagnostics presented. Test results that match or
+ *   are higher than the given level are returned.
+ *
+ * @returns
+ *  Array that complies to the format as seen in hook_requirements().
+ */
+function _acquia_purge_get_diagnosis($verbosity = ACQUIA_PURGE_SEVLEVEL_INFO) {
+  static $tests;
+
+  // Initialize $tests and gather test results, cache everything statically.
+  if (is_null($tests)) {
+    $prefix = '_acquia_purge_get_diagnosis_';
+    $tests = array();
+    $t = get_t();
+
+    // Require the file that contains our tests: acquia_purge.diagnostics.inc.
+    module_load_include('inc', 'acquia_purge', 'acquia_purge.diagnostics');
+
+    // Similar to hooks, functions starting with "_acquia_purge_get_diagnosis_"
+    // will be regarded as individual tests and called to gather results.
+    $functions = get_defined_functions();
+    foreach ($functions['user'] as $function) {
+      if ($function === '_acquia_purge_get_diagnosis_logged') {
+        continue;
+      }
+      elseif (strpos($function, $prefix) !== 0) {
+        continue;
+      }
+
+      // Add the test and its resulting data to the tests array.
+      $tst = str_replace($prefix, 'acquia_purge_', $function);
+      $tests[$tst] = $function($t);
+
+      // Overwrite or assure data integrity on most of the fields.
+      $tests[$tst]['name'] = isset($tests[$tst]['title']) ? $tests[$tst]['title'] : $tst;
+      $tests[$tst]['description'] = isset($tests[$tst]['description']) ? $tests[$tst]['description'] : NULL;
+      $tests[$tst]['description_plain'] = strip_tags($tests[$tst]['description']);
+      $tests[$tst]['severity'] = isset($tests[$tst]['severity']) ? $tests[$tst]['severity'] : ACQUIA_PURGE_SEVLEVEL_INFO;
+      $tests[$tst]['value_plain'] = isset($tests[$tst]['value_plain']) ? $tests[$tst]['value_plain'] : $tests[$tst]['value'];
+      $tests[$tst]['value'] = $t('<b>@title</b><br />@value', array(
+        '@title' => $tests[$tst]['title'],
+        '@value' => $tests[$tst]['value'],
+        )
+      );
+      $tests[$tst]['title'] = $t('Acquia Purge');
+    }
+  }
+
+  // Return test results that match or are higher than the verbosity level.
+  $results = array();
+  foreach ($tests as $name => $result) {
+    if ($result['severity'] >= $verbosity) {
+      $results[$name] = $result;
+    }
+  }
+  return $results;
+}
+
+/**
+ * Log diagnostic test results to watchdog.
+ *
+ * @param array $items
+ *   Associative array with test results or an individual test result array.
+ * @param boolean $deduplicate
+ *   Prevent diagnostic messages from ending up in the logs multiple times when
+ *   they already have been logged since the last queue wipe.
+ *
+ * @see _acquia_purge_get_diagnosis()
+ * @returns
+ *  Void,
+ */
+function _acquia_purge_get_diagnosis_logged($items, $deduplicate = TRUE) {
+  $map = array(
+    ACQUIA_PURGE_SEVLEVEL_INFO    => WATCHDOG_INFO,
+    ACQUIA_PURGE_SEVLEVEL_OK      => WATCHDOG_INFO,
+    ACQUIA_PURGE_SEVLEVEL_WARNING => WATCHDOG_ERROR,
+    ACQUIA_PURGE_SEVLEVEL_ERROR   => WATCHDOG_CRITICAL,
+  );
+
+  // Wrap single a single test result into a workable array.
+  if (isset($items['severity'])) {
+    $items = array($items);
+  }
+
+  // Iterate the items and report them to the watchdog log.
+  foreach ($items as $item) {
+    $description = $item['description_plain'];
+    if (empty($description)) {
+      $description = $item['value_plain'];
+    }
+
+    // If we aren't asked to deduplicate messages, log it straight away.
+    if (!$deduplicate) {
+      watchdog('acquia_purge', $description, array(), $map[$item['severity']]);
+    }
+
+    // Run a duplicate check by hashing and checking state data.
+    else {
+      $logged = _acquia_purge_get('logged_errors');
+      $hash = sha1($description);
+
+      if (in_array($hash, $logged)) {
+        return;
+      }
+
+      // Log the message and add the hash to the deduplication list.
+      watchdog('acquia_purge', $description, array(), $map[$item['severity']]);
+      $logged[] = $hash;
+      _acquia_purge_state_set('logged_errors', $logged);
+    }
+  }
+}
+
+/**
+ * Get a list of defined domains that we can purge for.
+ *
+ * @returns
+ *   Array with string values mapping to all defined DNS domains for this site.
+ */
+function _acquia_purge_get_domains() {
+  static $domains;
+
+  // Statically cache the domains as fetching them once per request is enough.
+  if (is_null($domains)) {
+    $domains = array();
+
+    // If the configuration key 'acquia_purge_domains' is set we skip automatic
+    // detection fully and add that list of domains to be purged.
+    if ($acquia_purge_domains = _acquia_purge_get('acquia_purge_domains')) {
+      if (is_array($acquia_purge_domains) && count($acquia_purge_domains)) {
+        foreach ($acquia_purge_domains as $domain) {
+          _acquia_purge_get_domains_add($domain, $domains);
+        }
+
+        // Call hook_acquia_purge_domains_alter() implementations and allow
+        // alteration of the domains list just before it gets stored.
+        foreach (module_implements('acquia_purge_domains_alter') as $module) {
+          $function = $module . '_acquia_purge_domains_alter';
+          $function($domains);
+        }
+
+        // Set and return the set of hardcoded domains.
+        return $domains;
+      }
+    }
+
+    // Add the current HTTP_HOST that we're connected to.
+    _acquia_purge_get_domains_add($_SERVER['HTTP_HOST'], $domains);
+
+    // Now let Drupal render a URL for us from which we extract the domain.
+    if ($parsed_url = parse_url(url('', array('absolute' => TRUE)))) {
+      _acquia_purge_get_domains_add($parsed_url['host'], $domains);
+    }
+
+    // Gather potentially defined domains in sites/sites.php, for this site.
+    _acquia_purge_get_domains_add_sitesphp($domains);
+
+    // To better support multi-sites we only load in the configured Acquia Cloud
+    // domain names when we are on the 'default' site as that would else flood
+    // another site which we don't want to happen, on <front> for example.
+    if (conf_path() == 'sites/default') {
+
+      // Add the domain names the customer defined on Acquia Cloud. When this
+      // process would fail we have at least the current + $base_url domain.
+      if (_acquia_purge_are_we_on_acquiacloud()) {
+        _acquia_purge_get_domains_add_acloud($domains);
+      }
+    }
+
+    // Call hook_acquia_purge_domains_alter() implementations and allow
+    // alteration of the domains list just before it gets stored.
+    foreach (module_implements('acquia_purge_domains_alter') as $module) {
+      $function = $module . '_acquia_purge_domains_alter';
+      $function($domains);
+    }
+  }
+
+  return $domains;
+}
+
+/**
+ * Add a domain to the domain list after cleaning and checking for duplicates.
+ *
+ * @param string $domain
+ *   The domain string to be added to the list.
+ * @param array &$domains
+ *   A reference to the array of currently gathered domain names.
+ *
+ * @returns
+ *  Void, data will be added by reference.
+ */
+function _acquia_purge_get_domains_add($domain, &$domains) {
+  $domain = trim(drupal_strtolower($domain));
+  if (!empty($domain) && !in_array($domain, $domains)) {
+    $domains[] = $domain;
+  }
+}
+
+/**
+ * Expand the list of domains being gathered by those defined in Acquia Cloud.
+ *
+ * @param array $domains
+ *   A reference to the array of currently gathered domain names.
+ *
+ * @returns
+ *   Void, data will be added by reference.
+ * @warning
+ *   The current implementation is known to be fishy and dangerous. There are
+ *   serious plans to make this cleaner (Acquia reference: CL-7068). @TODO
+ */
+function _acquia_purge_get_domains_add_acloud(&$domains) {
+  $detected_domains = array();
+
+  // This implementation is very dirty, admitted. Only possible way as of this
+  // writing as there is no API level exposure of it. These files are generated
+  // automatically so risks of changes are small.
+  if (file_exists('/etc/apache2/conf.d')) {
+    $site_name = _acquia_purge_get_site_name();
+    $server_name = shell_exec("grep -r 'ServerName' /etc/apache2/conf.d/$site_name*.conf");
+    foreach (explode('ServerName', $server_name) as $testable) {
+      foreach (explode(' ', trim($testable)) as $domain) {
+        $detected_domains[] = $domain;
+      }
+    }
+    $server_alias = shell_exec("grep -r 'ServerAlias' /etc/apache2/conf.d/$site_name*.conf");
+    foreach (explode('ServerAlias', $server_alias) as $testable) {
+      foreach (explode(' ', trim($testable)) as $domain) {
+        $detected_domains[] = $domain;
+      }
+    }
+  }
+
+  // Remove the amazonaws.com domain as we don't want that one purged.
+  if (count($detected_domains)) {
+    foreach ($detected_domains as $i => $detected_domain) {
+      if (strpos($detected_domain, 'amazonaws.com') !== FALSE) {
+        unset($detected_domains[$i]);
+      }
+    }
+  }
+
+  // Remove the acquia-sites.com domain if we have found more then 1 domain. The
+  // less domains found, the faster the end user experience will be.
+  if (count($detected_domains) > 1) {
+    foreach ($detected_domains as $i => $detected_domain) {
+      if (strpos($detected_domain, 'acquia-sites.com') !== FALSE) {
+        unset($detected_domains[$i]);
+      }
+    }
+  }
+
+  // Register all detected domain names.
+  foreach ($detected_domains as $i => $detected_domain) {
+    _acquia_purge_get_domains_add($detected_domain, $domains);
+  }
+}
+
+/**
+ * Expand the list of domains being gathered by interpreting sites/sites.php.
+ *
+ * @param array $domains
+ *   A reference to the array of currently gathered domain names.
+ *
+ * @returns
+ *   Void, data will be added by reference.
+ * @warning
+ *   The way the sites/sites.php array was designed was to make it a
+ *   lookup map with the current active URI as lookup resource, it makes
+ *   that relatively easy to do. However, we want to get all domains that
+ *   point to the currently chosen site. As the array keys are in the
+ *   format of '<port>.<domain>.<path>' this is relatively hackish.
+ */
+function _acquia_purge_get_domains_add_sitesphp(&$domains) {
+  $sitedir = str_replace('sites/', '', conf_path());
+  $tlds = array();
+
+  // Only interpret the $sites array if the file sites/sites.php exists.
+  if (!file_exists('sites/sites.php')) {
+    return;
+  }
+
+  // Define the full list of TLD's we have to check against to determine if a
+  // embedded domain name in '<port>.<domain>.<path>' seems valid for us.
+  include drupal_get_path('module', 'acquia_purge') . '/acquia_purge.tlds.inc';
+
+  // Include the file which will (re)propagate the $sites array for us.
+  $sites = array();
+  include 'sites/sites.php';
+
+  // Protect ourselves against badly written code inside sites.php.
+  if ((!isset($sites)) || empty($sites)) {
+    return;
+  }
+
+  // Iterate and validate each record in the resulting $sites array.
+  foreach ($sites as $site => $directory) {
+
+    // Skip those that point to a different site directory then we are on.
+    if ($directory != $sitedir) {
+      continue;
+    }
+
+    // Split $site that can be defined in the form of '<port>.<domain>.<path>'.
+    $site = explode('.', $site);
+
+    // Strip TCP port's in '<port>....'.
+    if (is_numeric($site[0])) {
+      unset($site[0]);
+    }
+
+    // We skip all $site records which don't end on a common known TLD, examples
+    // would be '8080.localhost', 'www.drupal.org.my.dir' and every other site
+    // that's defined with a path appended to it. It's an unfortunate limitation
+    // but a very hard thing to support, so checking on TLD's is the only
+    // sensible thing we can do to support as much scenario's as possible.
+    if (!in_array(end($site), $tlds)) {
+      continue;
+    }
+
+    // What's left should be a 99.99% correct domain name we want to see purged.
+    _acquia_purge_get_domains_add(implode('.', $site), $domains);
+  }
+}
+
+/**
+ * Get a list of protocol schemes that will be purged.
+ *
+ * @returns
+ *   Array with scheme strings like 'http' and 'https'.
+ */
+function _acquia_purge_get_protocol_schemes() {
+  static $schemes;
+  if (is_null($schemes)) {
+    $schemes = array();
+    if (_acquia_purge_get('acquia_purge_http') === TRUE) {
+      $schemes[] = 'http';
+    }
+    if (_acquia_purge_get('acquia_purge_https') === TRUE) {
+      $schemes[] = 'https';
+    }
+    if (empty($schemes)) {
+      $schemes = array('ERROR');
+    }
+  }
+  return $schemes;
+}
+
+/**
+ * Determine the Acquia site name.
+ *
+ * @returns
+ *   Either a boolean FALSE or a string identifying what site we are on.
+ */
+function _acquia_purge_get_site_name() {
+  static $ah_site_name;
+  if (is_null($ah_site_name)) {
+    $ah_site_name = FALSE;
+    if (isset($_ENV['AH_SITE_NAME']) && !empty($_ENV['AH_SITE_NAME'])) {
+      $ah_site_name = $_ENV['AH_SITE_NAME'];
+    }
+  }
+  return $ah_site_name;
+}
+
+/**
+ * Determine the Acquia site group.
+ *
+ * @returns
+ *   Either a boolean FALSE or a string identifying what site group this is.
+ */
+function _acquia_purge_get_site_group() {
+  static $ah_site_group;
+  if (is_null($ah_site_group)) {
+    $ah_site_group = FALSE;
+    if (isset($_ENV['AH_SITE_GROUP']) && !empty($_ENV['AH_SITE_GROUP'])) {
+      $ah_site_group = $_ENV['AH_SITE_GROUP'];
+    }
+  }
+  return $ah_site_group;
+}
+
+/**
+ * Perform necessary string cleaning on a provided path string.
+ *
+ * Whenever working with user input it is required to first validate
+ * with _acquia_purge_input_validate() before cleaning it.
+ *
+ * @param string $path
+ *   The Drupal path (for example: '<front>', 'user/1' or a alias).
+ *
+ * @returns
+ *   The cleaned version of the path.
+ */
+function _acquia_purge_input_clean($path) {
+  if (!is_string($path)) {
+    return '';
+  }
+  $path = trim($path);
+  if (empty($path) || ($path === '/')) {
+    return '';
+  }
+
+  // Remove double slashes that might occur in strings.
+  $path = str_replace('//', '/', $path);
+
+  // Remove leading slashes as we add those in later too.
+  $path = ltrim($path, '/');
+
+  // Rewrite '<front>' to '', which will always be the frontpage. By using
+  // substr() and str_replace() we still allow cases like '<front>?param=1'.
+  if (drupal_substr($path, 0, 7) === '<front>') {
+    $path = str_replace('<front>', '', $path);
+  }
+
+  return $path;
+}
+
+/**
+ * Make up variations on the given paths for lazier administrative cleaning.
+ *
+ * As every URL gets uniquely cached, purging a path like 'news' will not purge
+ * potentially existing variations like 'news/' or 'news?page=0'. This helper
+ * is only meant to be used in places where an administrator is manually
+ * purging a few paths, for instance through Drush or the manual purge form.
+ *
+ * @param array $paths
+ *   Non-associative array with Drupal paths like '<front>' or 'user/1'.
+ * @param string $path
+ *   INTERNAL, don't use directly! Used to add made up variations to the
+ *   list by reference and to prevent duplicate paths.
+ *
+ * @see acquia_purge_manualpurge_form_submit()
+ * @see drush_acquia_purge_ap_purge()
+ * @returns
+ *   Void, rewrites $paths as passed in by reference.
+ */
+function _acquia_purge_input_path_variations(&$paths, $path = NULL) {
+
+  // Are we supposed to just add a path to $paths? This only happens as we call
+  // ourselves here, a closure would have been better but that's PHP 5.3 :(.
+  if (!is_null($path)) {
+    if (!in_array($path, $paths)) {
+      $paths[] = $path;
+    }
+    return;
+  }
+
+  // Alias this function as $add, which reads better because of what it does.
+  $add = __FUNCTION__;
+
+  // Iterate all paths, build up $variations for every path and allow other
+  // modules to alter the variations. Then add all variations to $paths_new.
+  $paths_new = array();
+  foreach ($paths as $path) {
+    $path_original = $path;
+    $variations = array();
+
+    // Begin all the madness by splitting the path by parameter.
+    $path = explode('?', _acquia_purge_input_clean($path));
+    $path[0] = rtrim($path[0], '/');
+    $add($variations, $path[0]);
+    $add($variations, $path[0] . '/');
+    if (module_exists('path')) {
+      $add($variations, drupal_get_path_alias($path[0]));
+      $add($variations, drupal_get_normal_path($path[0]));
+      $add($variations, drupal_get_path_alias($path[0]) . '/');
+      $add($variations, drupal_get_normal_path($path[0]) . '/');
+    }
+    if (isset($path[1])) {
+      $add($variations, implode('?', $path));
+      $add($variations, str_replace('?', '/?', implode('?', $path)));
+      $path_0 = $path[0];
+      $path[0] = drupal_get_path_alias($path_0);
+      $add($variations, implode('?', $path));
+      $path[0] = drupal_get_normal_path($path_0);
+      $add($variations, implode('?', $path));
+      $path[0] = drupal_get_path_alias($path_0) . '/';
+      $add($variations, implode('?', $path));
+      $path[0] = drupal_get_normal_path($path_0) . '/';
+      $add($variations, implode('?', $path));
+    }
+
+    // Let hook_acquia_purge_variations_alter() implementations edit the list.
+    foreach (module_implements('acquia_purge_variations_alter') as $module) {
+      $function = $module . '_acquia_purge_variations_alter';
+      $function($path_original, $variations);
+    }
+
+    // Now pump all those variations over into $paths_new.
+    foreach ($variations as $variation) {
+      $add($paths_new, $variation);
+    }
+  }
+
+  $paths = $paths_new;
+}
+
+/**
+ * Validate a user provided path string.
+ *
+ * @param string $path
+ *   The Drupal path (for example: '<front>', 'user/1' or a alias).
+ *
+ * @returns
+ *   FALSE on success (!!) or a translated string describing what's wrong with
+ *   the given user input.
+ */
+function _acquia_purge_input_validate($path) {
+  static $history;
+  if (is_null($history)) {
+    $history = array();
+  }
+
+  // Start all the validation checks.
+  if (empty($path)) {
+    $front = (php_sapi_name() === 'cli') ? '<front>' : '&lt;front&gt;';
+    return _acquia_purge_input_validate_msgs('empty');
+  }
+  if (!is_string($path)) {
+    return _acquia_purge_input_validate_msgs('nostring');
+  }
+  if (stristr($path, 'http:') || stristr($path, 'https:')) {
+    return _acquia_purge_input_validate_msgs('url');
+  }
+  if (preg_match('/\s/', $path)) {
+    return _acquia_purge_input_validate_msgs('space');
+  }
+  if (stristr($path, '*')) {
+    return _acquia_purge_input_validate_msgs('wildcard');
+  }
+  if (in_array($path, $history)) {
+    return _acquia_purge_input_validate_msgs('double');
+  }
+
+  // All tests passed, remember it for future duplication testing.
+  $history[] = $path;
+  return FALSE;
+}
+
+/**
+ * Retrieve validation messages on user provided path strings.
+ *
+ * @param string $msg
+ *   The message you would like to retrieve, see implementation.
+ *
+ * @see _acquia_purge_input_validate()
+ * @returns
+ *   Returns a fully translated string, or NULL.
+ */
+function _acquia_purge_input_validate_msgs($msg) {
+  static $messages;
+  if (is_null($messages)) {
+    $messages = array();
+    $messages['space'] = t('The path cannot contain a space!');
+    $messages['double'] = t('You have already listed this path!');
+    $messages['nostring'] = t('The path is not a string!');
+    $messages['wildcard'] = t('You cannot purge paths with wildcard signs (*)'
+      . ', unfortunately this is not supported.');
+    $messages['url'] = t('You provided a URL which is not compatible with the way'
+      . ' Acquia Purge works, as it constructs full URLs for its configured'
+      . ' domains.');
+    $messages['empty'] = t('The path cannot be empty, if you intended to purge'
+      . ' the frontpage of your site, use "/" or "!front".',
+      array(
+        '!front' => (php_sapi_name() === 'cli') ? '<front>' : '&lt;front&gt;')
+      );
+  }
+  return isset($messages[$msg]) ? $messages[$msg] : NULL;
+}
+
+/**
+ * Manual purge form: require inclusion wrapper.
+ *
+ * @see __acquia_purge_manualpurge_add()
+ */
+function _acquia_purge_manualpurge_add($form, &$form_state) {
+  module_load_include('inc', 'acquia_purge', 'acquia_purge.admin');
+  return __acquia_purge_manualpurge_add($form, $form_state);
+}
+
+/**
+ * Manual purge form: require inclusion wrapper.
+ *
+ * @see __acquia_purge_manualpurge_remove()
+ */
+function _acquia_purge_manualpurge_remove($form, &$form_state) {
+  module_load_include('inc', 'acquia_purge', 'acquia_purge.admin');
+  return __acquia_purge_manualpurge_remove($form, $form_state);
+}
+
+/**
+ * Manual purge form: require inclusion wrapper.
+ *
+ * @see __acquia_purge_manualpurge_paths()
+ */
+function _acquia_purge_manualpurge_paths($form, &$form_state) {
+  module_load_include('inc', 'acquia_purge', 'acquia_purge.admin');
+  return __acquia_purge_manualpurge_paths($form, $form_state);
+}
+
+/**
+ * Manual purge form: require inclusion wrapper.
+ *
+ * @see __acquia_purge_manualpurge_validate()
+ */
+function _acquia_purge_manualpurge_validate($form, &$form_state) {
+  module_load_include('inc', 'acquia_purge', 'acquia_purge.admin');
+  return __acquia_purge_manualpurge_validate($form, $form_state);
+}
+
+/**
+ * Manual purge form: require inclusion wrapper.
+ *
+ * @see __acquia_purge_manualpurge_add()
+ */
+function _acquia_purge_manualpurge_submit($form, &$form_state) {
+  module_load_include('inc', 'acquia_purge', 'acquia_purge.admin');
+  return __acquia_purge_manualpurge_submit($form, $form_state);
+}
+
+/**
+ * Queue manager: return the queue object in use for Acquia Purge.
+ *
+ * @returns
+ *   Queue object as generated by DrupalQueue::get().
+ */
+function _acquia_purge_queue() {
+  static $queue;
+
+  // We cache the queue object statically so create it once per HTTP request.
+  if (is_null($queue)) {
+    $queue = DrupalQueue::get('acquia_purge', TRUE);
+  }
+
+  return $queue;
+}
+
+/**
+ * Queue manager: add a single purge to the queue.
+ *
+ * @param string $path
+ *   The Drupal path (for example: '<front>', 'user/1' or a alias).
+ *
+ * @returns
+ *   The total amount of items in the queue (int).
+ */
+function _acquia_purge_queue_add($path) {
+  $queue = _acquia_purge_queue();
+
+  // Perform input cleaning to end up with a somewhat trustworthy path string.
+  $path = _acquia_purge_input_clean($path);
+
+  // Retrieve and bump the queue counter.
+  $qtotal = _acquia_purge_get('qtotal');
+  $qtotal++;
+
+  // Add the non-associative purge item definition.
+  $queue->createItem(array($path));
+
+  // Register the currently logged on user as one of the queue users. These
+  // users are given the AJAX client side script until the queue is cleaned up.
+  if (_acquia_purge_get('acquia_purge_cron') !== TRUE) {
+    static $uiuser_registered;
+    if (is_null($uiuser_registered) && (php_sapi_name() != 'cli')) {
+      global $user;
+
+      // Only register authenticated users, anonymous users will only queue.
+      if (isset($user->roles[DRUPAL_AUTHENTICATED_RID])) {
+        $uiusers = _acquia_purge_get('uiusers');
+        if (!in_array($user->name, $uiusers)) {
+          $uiusers[] = $user->name;
+          _acquia_purge_state_set('uiusers', $uiusers);
+        }
+        $uiuser_registered = TRUE;
+      }
+    }
+  }
+
+  // Store the queue total counter in our state storage.
+  _acquia_purge_state_set('qtotal', $qtotal);
+
+  return $qtotal;
+}
+
+/**
+ * Queue manager: clear the queue and invalidate all running processes.
+ *
+ * @param boolean $state_only
+ *   Only wipe associated state data as the queue is already certainly
+ *   cleared, for instance when numberOfItems() returned 0.
+ *
+ * @returns
+ *   Void.
+ */
+function _acquia_purge_queue_clear($state_only = FALSE) {
+
+  // Reset several state data keys to their default value.
+  $names = array('qtotal', 'qgood', 'qbad', 'locked',
+    'queued', 'purged', 'uiusers', 'logged_errors');
+  foreach ($names as $name) {
+    $default = _acquia_purge_get($name, TRUE);
+    _acquia_purge_state_set($name, $default);
+  }
+
+  // Only retrieve and really delete the queue if we are asked to.
+  if ($state_only === FALSE) {
+    $queue = _acquia_purge_queue();
+    $queue->deleteQueue();
+  }
+}
+
+/**
+ * Queue manager: help prevent duplicate path queuing and purging.
+ *
+ * Our queue is database backed and if we would query every path before it ends
+ * up in the queue, the cost would become too expensive. This helper however,
+ * maintains breadcrumb lists of the paths it was given and returns FALSE for
+ * new items and TRUE for old items. Items are theoretically kept till the
+ * queue is emptied.
+ *
+ * If the site has 'acquia_purge_memcache' set to TRUE, the implementation will
+ * use the state storage mechanism in addition to the static variables, which
+ * means that data will persist between requests. With the file-based state
+ * storage, this would result in massive IO activity so less accurate
+ * deduplication is acceptable.
+ *
+ * @warning
+ *   Duplicated paths can still end up in the queue, especially when not using
+ *   the 'acquia_purge_memcache' setting.
+ *
+ * @param string $path
+ *   The Drupal path (for example: '<front>', 'user/1' or a alias).
+ * @param string $list
+ *   Two breadcrumb lists are kept, 'queued' for preventative deduplication
+ *   and 'purged' for deduplication when _acquia_purge_queue_pop() runs.
+ * @param int $l
+ *   The $l parameter stands for 'limit' and represents the rotation limit kept
+ *   for each list, as the list resets when it grew bigger than that.
+ *
+ * @returns
+ *   TRUE when the path exists, FALSE when it doesn't.
+ */
+function _acquia_purge_queue_deduplicate($path, $list = 'queued', $l = 500) {
+  $memcached_backed_storage = _acquia_purge_are_we_using_memcached();
+
+  // Lists is where we keep all data during the requests.
+  static $lists;
+  if (is_null($lists)) {
+    $lists = array();
+  }
+
+  // And then each $list gets its own subsection.
+  if (!isset($lists[$list])) {
+    $lists[$list] = array();
+    if ($memcached_backed_storage) {
+      $lists[$list] = _acquia_purge_get($list);
+    }
+  }
+
+  // Check if it exists before list rotation, then add missing items.
+  $exists = in_array($path, $lists[$list]);
+  if (count($lists[$list]) >= $l) {
+    $lists[$list] = array();
+  }
+  if (!$exists) {
+    $lists[$list][] = $path;
+    if ($memcached_backed_storage) {
+      _acquia_purge_state_set($list, $lists[$list]);
+    }
+  }
+
+  return $exists;
+}
+
+/**
+ * Queue manager: acquire a lock and get queue processing permission.
+ *
+ * @param boolean $acquire
+ *   TRUE to acquire a lock, NULL to release it.
+ *
+ * @see lock_acquire()
+ * @returns
+ *   TRUE when the lock is acquired.
+ *   FALSE if it is still locked
+ *   NULL when $acquire isn't TRUE.
+ */
+function _acquia_purge_queue_lock($acquire = TRUE) {
+  if ($acquire === NULL) {
+    _acquia_purge_state_set('locked', FALSE);
+    _acquia_purge_state_commit();
+    lock_release(__FUNCTION__);
+    return;
+  }
+  if (lock_acquire(__FUNCTION__, 60)) {
+    _acquia_purge_state_set('locked', TRUE);
+    _acquia_purge_state_commit();
+    return TRUE;
+  }
+  else {
+    _acquia_purge_state_set('locked', FALSE);
+    _acquia_purge_state_commit();
+    return FALSE;
+  }
+}
+
+/**
+ * Queue manager: pop X amount of items from the queue.
+ *
+ * @param string $processor
+ *   The name of a PHP function or callable that gets called to process a
+ *   individual item popped from the queue. The callback is given the path as
+ *   argument. This parameter is optional.
+ *
+ * @warning
+ *   Calling this helper commits the caller into actually processing the items
+ *   popped from the queue, either by iterating the return value or by providing
+ *   a processing callback that processes individual values. Not processing the
+ *   result will lead into confusion and broken functionality.
+ * @returns
+ *   Non-associative array of which every value record represents one resulting
+ *   HTTP PURGE request. Array items are non-associative arrays itself with the
+ *   path in key #0.
+ */
+function _acquia_purge_queue_pop($processor = NULL) {
+  $maxitems = _acquia_purge_get_capacity();
+  $qtotal = _acquia_purge_get('qtotal');
+  $qgood  = _acquia_purge_get('qgood');
+  $qbad   = _acquia_purge_get('qbad');
+  $queue  = _acquia_purge_queue();
+  $items  = array();
+
+  // No longer pop any items if we reached the resource limits of this script.
+  if (!$maxitems) {
+    return $items;
+  }
+
+  // Attempt to pop $maxitems amount of items from the queue.
+  for ($i = 0; $i < $maxitems; $i++) {
+    if (!($item = $queue->claimItem())) {
+      continue;
+    }
+
+    // Discard any items that we already purged since the last queue clear.
+    if (_acquia_purge_queue_deduplicate($item->data[0], 'purged')) {
+      $queue->deleteItem($item);
+      $qtotal--;
+      $i++;
+      continue;
+    }
+
+    // Process the item - or later if $processor is NULL - and add to $items.
+    $result = isset($processor) ?
+      call_user_func_array($processor, $item->data) : TRUE;
+    $items[] = $item->data;
+
+    // Update statistics, the duplication log and tell the queue about $item.
+    _acquia_purge_get_capacity(1);
+    if ($result) {
+      _acquia_purge_queue_deduplicate($item->data[0], 'purged');
+      $queue->deleteItem($item);
+      $qgood++;
+    }
+    else {
+      $queue->releaseItem($item);
+      $qbad++;
+    }
+
+    // Write statistics back to state for early high error-rate detection.
+    _acquia_purge_state_set('qtotal', $qtotal);
+    _acquia_purge_state_set('qgood', $qgood);
+    _acquia_purge_state_set('qbad', $qbad);
+  }
+
+  // As soon as the queue got emptied, reset associated state data.
+  if ((int) $queue->numberOfItems() === 0) {
+    _acquia_purge_queue_clear(TRUE);
+  }
+
+  return $items;
+}
+
+/**
+ * Queue manager: process a single path (on all domains and balancers).
+ *
+ * @param string $path
+ *   The Drupal path (for example: '<front>', 'user/1' or a alias).
+ *
+ * @returns
+ *   Boolean TRUE/FALSE indicating success or failure of the attempt.
+ */
+function _acquia_purge_queue_processpurge($path) {
+  $base_path = _acquia_purge_get('acquia_purge_base_path');
+
+  // Ask our built-in diagnostics system to preliminary find issues that are so
+  // risky we can expect problems. Everything with ACQUIA_PURGE_SEVLEVEL_ERROR
+  // will cause purging to cease and log messages to be written. Because we
+  // return FALSE, the queued items will be purged later in better weather.
+  if (count($err = _acquia_purge_get_diagnosis(ACQUIA_PURGE_SEVLEVEL_ERROR))) {
+    _acquia_purge_get_diagnosis_logged($err);
+    return FALSE;
+  }
+
+  // Because a single path can exist on http://, https://, on various domain
+  // names and could be cached on any of the known load balancers. Therefore we
+  // define a list of HTTP requests that we are going to fire in a moment.
+  $requests = array();
+  foreach (_acquia_purge_get_balancers() as $balancer_ip) {
+    foreach (_acquia_purge_get_domains() as $domain) {
+      foreach (_acquia_purge_get_protocol_schemes() as $scheme) {
+        $rqst = new stdClass();
+        $rqst->scheme = $scheme;
+        $rqst->rtype = 'PURGE';
+        $rqst->balancer = $balancer_ip;
+        $rqst->domain = $domain;
+        $rqst->path = str_replace('//', '/', $base_path . $path);
+        $rqst->uri = $rqst->scheme . '://' . $rqst->domain . $rqst->path;
+        $rqst->uribal = $rqst->scheme . '://' . $rqst->balancer . $rqst->path;
+        $rqst->headers = array(
+          'Host: ' . $rqst->domain,
+          'Accept-Encoding: gzip',
+          'X-Acquia-Purge: ' . _acquia_purge_get_site_name(),
+        );
+        $requests[] = $rqst;
+      }
+    }
+  }
+
+  // Before we issue these purges against the load balancers we ensure that any
+  // of these URLs are not left cached in Drupal's ordinary page cache.
+  $already_cleared = array();
+  foreach ($requests as $rqst) {
+    if (!in_array($rqst->uri, $already_cleared)) {
+      cache_clear_all($rqst->uri, 'cache_page');
+      $already_cleared[] = $rqst->uri;
+    }
+  }
+
+  // Execute the prepared requests efficiently and log their results.
+  $overall_success = TRUE;
+  foreach (_acquia_purge_queue_processpurge_requests($requests) as $rqst) {
+    if ($rqst->result == TRUE) {
+      if (_acquia_purge_get('acquia_purge_log_success') === TRUE) {
+        watchdog(
+          'acquia_purge',
+          "Purged '%url' from load balancer %balancer.",
+          array('%url' => $rqst->uri, '%balancer' => $rqst->balancer),
+          WATCHDOG_INFO);
+      }
+      _acquia_purge_queue_history($rqst->uri);
+    }
+    else {
+      if ($overall_success) {
+        $overall_success = FALSE;
+      }
+
+      // Log the failing attempt and include verbose debugging information.
+      watchdog(
+        'acquia_purge',
+        "Failed attempt to purge '%url' from load balancer %balancer for "
+          . "unknown reasons as curl failed. The path item is re-queued! "
+          . "Debugging symbols: '%debug',",
+        array(
+          '%url' => $rqst->uri,
+          '%balancer' => $rqst->balancer,
+          '%debug' => $rqst->error_debug,
+        ),
+        WATCHDOG_ERROR
+      );
+    }
+  }
+
+  // If one the many HTTP requests failed we treat the full path as a failure,
+  // by sending back FALSE the item will remain in the queue. Failsafe style.
+  return $overall_success;
+}
+
+/**
+ * Queue manager: process the given HTTP requests and do it efficiently.
+ *
+ * @param string $requests
+ *   Unassociative array (list) of simple Stdclass objects with the following
+ *   properties: scheme, rtype, server, domain, path, uri, uribal.
+ *
+ * @returns
+ *   The given requests array with added properties that describe the result of
+ *   the request: 'result', 'error_curl', 'error_http', 'error_debug'.
+ */
+function _acquia_purge_queue_processpurge_requests($requests) {
+  $single_mode = (count($requests) === 1);
+  $results = array();
+
+  // Initialize the cURL multi handler.
+  if (!$single_mode) {
+    static $curl_multi;
+    if (is_null($curl_multi)) {
+      $curl_multi = curl_multi_init();
+    }
+  }
+
+  // Enter our event loop and keep on requesting until $unprocessed is empty.
+  $unprocessed = count($requests);
+  while ($unprocessed > 0) {
+
+    // Group requests per sets that we can run in parallel.
+    for ($i = 0; $i < ACQUIA_PURGE_PARALLEL_REQUESTS; $i++) {
+      if ($rqst = array_shift($requests)) {
+        $rqst->curl = curl_init();
+
+        // Instantiate the cURL resource and configure its runtime parameters.
+        curl_setopt($rqst->curl, CURLOPT_URL, $rqst->uribal);
+        curl_setopt($rqst->curl, CURLOPT_TIMEOUT, ACQUIA_PURGE_REQUEST_TIMEOUT);
+        curl_setopt($rqst->curl, CURLOPT_HTTPHEADER, $rqst->headers);
+        curl_setopt($rqst->curl, CURLOPT_CUSTOMREQUEST, $rqst->rtype);
+        curl_setopt($rqst->curl, CURLOPT_FAILONERROR, TRUE);
+        curl_setopt($rqst->curl, CURLOPT_RETURNTRANSFER, TRUE);
+
+        // For SSL, we need host and peer verification disabled in some cases.
+        if ($rqst->scheme === 'https') {
+          curl_setopt($rqst->curl, CURLOPT_SSL_VERIFYHOST, FALSE);
+          curl_setopt($rqst->curl, CURLOPT_SSL_VERIFYPEER, FALSE);
+        }
+
+        // Add our handle to the multiple cURL handle.
+        if (!$single_mode) {
+          curl_multi_add_handle($curl_multi, $rqst->curl);
+        }
+
+        // Add the shifted request to the results array and change the counter.
+        $results[] = $rqst;
+        $unprocessed--;
+      }
+    }
+
+    // Execute the created handles in parallel.
+    if (!$single_mode) {
+      $active = NULL;
+      do {
+        $mrc = curl_multi_exec($curl_multi, $active);
+      } while ($mrc == CURLM_CALL_MULTI_PERFORM);
+      while ($active && $mrc == CURLM_OK) {
+        if (curl_multi_select($curl_multi) != -1) {
+          do {
+            $mrc = curl_multi_exec($curl_multi, $active);
+          } while ($mrc == CURLM_CALL_MULTI_PERFORM);
+        }
+      }
+    }
+
+    // In single mode there's only one request to do, use curl_exec().
+    else {
+      curl_exec($results[0]->curl);
+      $single_info = array('result' => curl_errno($results[0]->curl));
+    }
+
+    // Iterate the set of results and fetch cURL result and resultcodes. Only
+    // process those with the 'curl' property as the property will be removed.
+    foreach ($results as $i => $rqst) {
+      if (!isset($rqst->curl)) {
+        continue;
+      }
+      $info = $single_mode ? $single_info : curl_multi_info_read($curl_multi);
+      $results[$i]->result = ($info['result'] == CURLE_OK) ? TRUE : FALSE;
+      $results[$i]->error_curl = $info['result'];
+      $results[$i]->error_http = curl_getinfo($rqst->curl, CURLINFO_HTTP_CODE);
+
+      // Curl hasn't proven to be always as reliable when it comes to result
+      // reporting, and therefore we enforce success whenever the HTTP codes
+      // are 200 or 404, which is Varnish-talk for 'things are good my friend'.
+      if (in_array($results[$i]->error_http, array(404, 200))) {
+        $results[$i]->result = TRUE;
+      }
+
+      // Collect debugging information if necessary.
+      $results[$i]->error_debug = '';
+      if (!$results[$i]->result) {
+        $debug = curl_getinfo($rqst->curl);
+        $debug['headers'] = implode('|', $rqst->headers);
+        unset($debug['certinfo']);
+        $results[$i]->error_debug = _acquia_purge_export_debug_symbols($debug);
+      }
+
+      // Remove the handle if parallel processing occurred.
+      if (!$single_mode) {
+        curl_multi_remove_handle($curl_multi, $rqst->curl);
+      }
+
+      // Close the resource and delete its property.
+      curl_close($rqst->curl);
+      unset($rqst->curl);
+    }
+  }
+
+  return $results;
+}
+
+/**
+ * Queue manager: maintain a request-local list of purged URLs.
+ *
+ * @param string $url
+ *   Optional, when passed in the given URL will be added to the history log.
+ *
+ * @returns
+ *   The full non-associative array with URLs kept in memory.
+ */
+function _acquia_purge_queue_history($url = NULL) {
+  static $urls;
+  if (is_null($urls)) {
+    $urls = array();
+  }
+  if (!is_null($url)) {
+    $urls[] = $url;
+  }
+  return $urls;
+}
+
+/**
+ * Queue manager: generate progress statistics on the purge queue.
+ *
+ * @param string $key
+ *   The requested statistics key to return.
+ *
+ * @returns
+ *   Associative array with the keys 'running', 'total', 'remaining',
+ *   'good', 'bad', 'percent' and 'purgehistory'.
+ */
+function _acquia_purge_queue_stats($key = NULL) {
+  $info = array(
+    'purgehistory' => _acquia_purge_queue_history(),
+    'locked' => _acquia_purge_get('locked'),
+    'total' => _acquia_purge_get('qtotal'),
+    'good'      => _acquia_purge_get('qgood'),
+    'bad'       => _acquia_purge_get('qbad'),
+    'remaining' => 0,
+    'percent' => 100,
+    'running' => FALSE,
+  );
+
+  // Calculate the percentages when the queue doesn't seem to be empty.
+  if ($info['total'] !== 0) {
+    $info['running'] = TRUE;
+    $info['remaining'] = $info['total'] - $info['good'];
+    $info['percent'] = ($info['remaining'] / $info['total']) * 100;
+    $info['percent'] = (int) (100 - floor($info['percent']));
+  }
+
+  return is_null($key) ? $info : $info[$key];
+}
+
+/**
+ * Queue manager: determines if the current user owns a running purge session.
+ *
+ * @see _acquia_purge_queue_add()
+ * @returns
+ *   Boolean TRUE when the current user with the exact same session initiated
+ *   a purge session earlier and thus owns the purge session.
+ */
+function _acquia_purge_queue_is_user_purging() {
+  global $user;
+
+  // Anonymous users are never able to trigger purges by design, if this would
+  // ever become a necessity we'll introduce a permission to protect most sites.
+  if (!isset($user->roles[DRUPAL_AUTHENTICATED_RID])) {
+    return FALSE;
+  }
+
+  // If the site administrator has deliberately enabled cron-based processing,
+  // there's no reason to assume a user is purging. The latter might have
+  // initiated it, but is not the one who's going to process it as cron will.
+  if (_acquia_purge_get('acquia_purge_cron') === TRUE) {
+    return FALSE;
+  }
+
+  // Retrieve the list of user names owning an ongoing purge process.
+  $uiusers = _acquia_purge_get('uiusers');
+
+  // If the uiusers list is empty, that means no active purges are ongoing.
+  if (!count($uiusers)) {
+    return FALSE;
+  }
+
+  // Is the current user one of the uiusers of the actively ongoing purge?
+  if (!in_array($user->name, $uiusers)) {
+    return FALSE;
+  }
+
+  // Are we running on a Acquia Cloud environment?
+  if (!_acquia_purge_are_we_on_acquiacloud()) {
+    return FALSE;
+  }
+
+  // All tests passed, this user can process the queue.
+  return TRUE;
+}
+
+/**
+ * Load state data from the persistent storage location.
+ *
+ * @see _acquia_purge_state_set()
+ * @see _acquia_purge_state_get()
+ */
+function _acquia_purge_state_initialize() {
+  global $_acquia_purge_state;
+
+  // Initialize the global variable.
+  if (!is_null($_acquia_purge_state)) {
+    return;
+  }
+  else {
+    $_acquia_purge_state = array();
+  }
+
+  // Load up the data from memcache if it is enabled.
+  if (_acquia_purge_are_we_using_memcached()) {
+    $state = dmemcache_get(
+      ACQUIA_PURGE_STATE_MEMKEY, ACQUIA_PURGE_STATE_MEMBIN);
+    if (is_array($state) && count($state)) {
+      $_acquia_purge_state = $state;
+    }
+    return;
+  }
+
+  // Load the state data from a file on disk. This is obviously slower than
+  // through memory but compared to the variable_set() we used before and given
+  // the fact that we cannot rely on the Cache API directly (as it is not
+  // disposable information), this is still a whole lot better.
+  else {
+
+    // We are keeping the raw payload globally, so that we can check if we
+    // really need to write out to disk in _acquia_purge_state_commit().
+    global $_acquia_purge_state_raw;
+
+    // Check if the file exists and if so, load up its raw content.
+    if (!file_exists(ACQUIA_PURGE_STATE_FILE)) {
+      return;
+    }
+    $_acquia_purge_state_raw = file_get_contents(ACQUIA_PURGE_STATE_FILE);
+    if (!$_acquia_purge_state_raw) {
+      return;
+    }
+
+    // Now that we have the payload, unserialize and share it.
+    $data = unserialize($_acquia_purge_state_raw);
+    if (is_array($data) && count($data)) {
+      $_acquia_purge_state = $data;
+    }
+  }
+}
+
+/**
+ * Load a state data property.
+ *
+ * @param $name
+ *   The name of the state data property to return.
+ * @param $default
+ *   The default value to use if this data entry has never been set.
+ *
+ * @return
+ *   The value of the data entry.
+ *
+ * @see _acquia_purge_state_set()
+ * @see _acquia_purge_state_initialize()
+ */
+function _acquia_purge_state_get($name, $default = NULL) {
+  global $_acquia_purge_state;
+  if (is_null($_acquia_purge_state)) {
+    _acquia_purge_state_initialize();
+  }
+
+  // Return the data if it exists, else the default.
+  if (isset($_acquia_purge_state[$name])) {
+    return $_acquia_purge_state[$name];
+  }
+  return $default;
+}
+
+/**
+ * Store a state data property.
+ *
+ * @param $name
+ *   The name of the state data property to store.
+ * @param $value
+ *   The value to set. This can be any PHP data type.
+ *
+ * @return
+ *   Void.
+ *
+ * @see _acquia_purge_state_get()
+ * @see _acquia_purge_state_initialize()
+ */
+function _acquia_purge_state_set($name, $value) {
+  global $_acquia_purge_state;
+  if (is_null($_acquia_purge_state)) {
+    _acquia_purge_state_initialize();
+  }
+
+  // Store the data locally first.
+  $_acquia_purge_state[$name] = $value;
+
+  // Register a shutdown function to commit the state data in one go.
+  if (!isset($_acquia_purge_state['__commit_registered'])) {
+    $_acquia_purge_state['__commit_registered'] = TRUE;
+    drupal_register_shutdown_function('_acquia_purge_state_commit');
+  }
+}
+
+/**
+ * Commit the state data to its persistent storage location.
+ *
+ * @see _acquia_purge_state_set()
+ */
+function _acquia_purge_state_commit() {
+  global $_acquia_purge_state;
+  if (is_null($_acquia_purge_state)) {
+    _acquia_purge_state_initialize();
+  }
+
+  // Do not commit anything when the cookie isn't set, which might occur
+  // when something got written while _acquia_purge_state_wipe() followed.
+  if (!isset($_acquia_purge_state['__commit_registered'])) {
+    return;
+  }
+  else {
+    unset($_acquia_purge_state['__commit_registered']);
+  }
+
+  // Write out the data to memcache if that's enabled.
+  if (_acquia_purge_are_we_using_memcached()) {
+    dmemcache_set(
+      ACQUIA_PURGE_STATE_MEMKEY,
+      $_acquia_purge_state,
+      0, // Store the item permanently.
+      ACQUIA_PURGE_STATE_MEMBIN
+    );
+    return;
+  }
+
+  // Write the data to disk.
+  else {
+
+    // We are keeping the raw payload globally, so that we can check if we
+    // really need to write out to disk here.
+    global $_acquia_purge_state_raw;
+
+    // Serialize the current store and compare the raw data with the initial
+    // raw data, if they match exactly we won't write to disk to reduce IO.
+    $new_raw_payload = serialize($_acquia_purge_state);
+    if ($_acquia_purge_state_raw === $new_raw_payload) {
+      return;
+    }
+    $_acquia_purge_state_raw = $new_raw_payload;
+    file_put_contents(ACQUIA_PURGE_STATE_FILE, $new_raw_payload);
+  }
+}
+
+/**
+ * Wipe all state data.
+ *
+ * @see _acquia_purge_state_set()
+ * @see _acquia_purge_state_get()
+ * @see _acquia_purge_state_initialize()
+ * @see _acquia_purge_state_commit()
+ */
+function _acquia_purge_state_wipe() {
+  global $_acquia_purge_state;
+  unset($_acquia_purge_state);
+
+  // Always attempt to delete the memcached object if the function's here.
+  if (function_exists('dmemcache_delete')) {
+    dmemcache_delete(ACQUIA_PURGE_STATE_MEMKEY, ACQUIA_PURGE_STATE_MEMBIN);
+  }
+
+  // Check if the state file exists and wipe it if it does.
+  if (file_exists(ACQUIA_PURGE_STATE_FILE)) {
+    drupal_unlink(ACQUIA_PURGE_STATE_FILE);
+  }
+}
+
+/**
+ * Check if the current request path is blacklisted.
+ *
+ * On-screen notifications and interactive on-screen purge processing is not
+ * always appreciated or can break the layout at places like popups or AJAX
+ * callbacks. Therefore this helper attempts to prevent user annoyances
+ * the best it can, but if error messages or the on-screen purge processor
+ * are shown on a certain page, you know what to patch ;).
+ *
+ * @returns
+ *   FALSE if the current path is approved, TRUE if its blacklisted.
+ */
+function _acquia_purge_ui_path_blacklisted() {
+  $blacklist = array(
+
+    // First register our own paths on which things shouldn't show.
+    'admin/config/development/performance/manualpurge/autocomplete',
+    'acquia_purge_ajax_processor',
+    'admin/config/system/expire',
+
+    // Then common Drupal paths where nothing should happen.
+    'admin/reports/status',
+    'admin/reports/dblog',
+    'admin/dashboard/customize',
+    'admin/dashboard',
+    'system/ajax',
+    'file/ajax',
+    'file/progress',
+    'toolbar/toggle',
+    'batch',
+
+    // Media module.
+    'media/browser',
+    'media/browser/testbed',
+    'media/browser/list',
+    'media/browser/library',
+  );
+
+  // If we're called too early, don't make any noise.
+  if (!isset($_GET['q'])) {
+    return FALSE;
+  }
+
+  // If this page is in our blacklist, return TRUE.
+  elseif (in_array($_GET['q'], $blacklist)) {
+    return TRUE;
+  }
+
+  // Avoid paths that contain any of these snippets.
+  $snippets = array('autocomplete', 'ajax');
+  foreach ($snippets as $snippet) {
+    if (stristr($_GET['q'], $snippet)) {
+      return TRUE;
+    }
+  }
+
+  return FALSE;
+}
+
+/**
+ * Trigger client-side AJAX based purging during this request.
+ *
+ * @returns
+ *   Void, this function doesn't return anything.
+ */
+function _acquia_purge_ui_trigger_purge() {
+
+  // Prevent API misuse and don't trigger when this user doesn't own the queue.
+  if (!_acquia_purge_queue_is_user_purging()) {
+    return;
+  }
+
+  // Load the JQuery logic that will start hitting 'acquia_purge_ajax_processor'
+  // which on its turn will process the queue. Because the back-end uses locks
+  // we don't have to worry about how many times we're hitting it. When the user
+  // doesn't have on-screen reporting enabled the HTML DIV won't be present
+  // causing the script to simply purge silently without notifying the user.
+  $module_path = drupal_get_path('module', 'acquia_purge');
+  drupal_add_js($module_path . '/acquia_purge.js');
+
+  // If the user has the permission 'purge on-screen' it means on-screen
+  // reporting is enabled and we'll set a standard drupal_set_message() that
+  // announces the AJAX powered purging. Because we're abusing the API with a
+  // non-standard message type our JQuery logic is smartly able to replace the
+  // nodes with the interactive progressbar.
+  if (user_access('purge on-screen')) {
+    $message = t("There have been changes to content, and these need to be
+      refreshed throughout the system. There may be a delay before the changes
+      appear to all website visitors.");
+
+    // Set the message and don't repeat it if it is already set.
+    drupal_set_message($message, 'acquia_purge_messages', FALSE);
+
+    // Add inline CSS to initially hide the message (see d.o. 2014461). A
+    // separate file that could be cached would be non-sense for this one line
+    // declaration as this statement only occurs for authenticated users.
+    drupal_add_css('.acquia_purge_messages {display:none;}',
+      array('type' => 'inline'));
+  }
+}
+
+/**
+ * DEPRECATED: Purge the paths from a node from Varnish.
+ *
+ * This function was once added to demonstrate the ability to build up paths
+ * and to quickly purge a node. However, it gives users the false assumption
+ * that this is the way to clear a node while in reality it forgets many, many
+ * things that also need to get cleared (files, terms, references), exact
+ * things what the Expire module was built for. So if you need to clear a node
+ * make sure to use expire_execute_expiration() instead.
+ *
+ * @param object $node
+ *   A Drupal node object that was just inserted or saved.
+ *
+ * @deprecated
+ * @returns
+ *   Associative array with the keys 'running', 'total', 'remaining',
+ *   'good', 'bad', 'percent' and 'purgehistory'.
+ */
+function acquia_purge_purge_node(&$node) {
+  $paths = array('node/' . $node->nid);
+  if (isset($node->path['alias']) && !empty($node->path['alias'])) {
+    $paths[] = $node->path['alias'];
+  }
+  if (isset($node->promote) && $node->promote) {
+    $paths[] = '<front>';
+    $paths[] = 'rss.xml';
+  }
+
+  // Return the paths routine and return the statistics from the queue manager.
+  return acquia_purge_purge_paths($paths);
+}
+
+/**
+ * Purge a certain Drupal path from Varnish.
+ *
+ * @param string $path
+ *   The Drupal path (for example: '<front>', 'user/1' or a alias).
+ *
+ * @returns
+ *   Associative array with the keys 'running', 'total', 'remaining',
+ *   'good', 'bad', 'percent' and 'purgehistory'.
+ */
+function acquia_purge_purge_path($path) {
+
+  // Queue the path if it didn't match the deduplication log.
+  if (!_acquia_purge_queue_deduplicate($path)) {
+    _acquia_purge_queue_add($path);
+  }
+
+  // Return the statistics array based returning useful information about the
+  // current state of the purge queue.
+  return _acquia_purge_queue_stats();
+}
+
+/**
+ * Purge several Drupal paths from Varnish.
+ *
+ * @param string $paths
+ *   Array with Drupal paths (for example: '<front>', 'user/1' or a alias).
+ *
+ * @returns
+ *   Associative array with the keys 'running', 'total', 'remaining',
+ *   'good', 'bad', 'percent' and 'purgehistory'.
+ */
+function acquia_purge_purge_paths($paths) {
+
+  // Dispatch the paths to acquia_purge_purge_path().
+  foreach ($paths as $path) {
+
+    // Queue the path if it didn't match the deduplication log.
+    if (!_acquia_purge_queue_deduplicate($path)) {
+      _acquia_purge_queue_add($path);
+    }
+  }
+
+  // Return the statistics array based returning useful information about the
+  // current state of the purge queue.
+  return _acquia_purge_queue_stats();
+}

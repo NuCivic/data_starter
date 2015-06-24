@@ -1,0 +1,175 @@
+<?php
+
+/**
+ * @file
+ * Installation file for the Acquia Purge module.
+ */
+
+/**
+ * Implements hook_install().
+ */
+function acquia_purge_install() {
+
+  // Install our queuing queue using Drupal's Queue API.
+  $queue = DrupalQueue::get('acquia_purge', TRUE);
+  $queue->createQueue();
+
+  // Enable Expire 7.x-2.x's most important expiration rules by default.
+  $defaults = array(
+    'expire_status' => EXPIRE_STATUS_ENABLED_EXTERNAL,
+    'expire_debug' => EXPIRE_DEBUG_DISABLED,
+    'expire_include_base_url' => FALSE,
+    'expire_node_actions' => array(1, 2, 3),
+    'expire_node_front_page' => 1,
+    'expire_node_term_pages' => 1,
+    'expire_comment_actions' => array(1, 2, 3, 4, 5),
+    'expire_comment_front_page' => 1,
+    'expire_comment_node_term_pages' => 1,
+    'expire_user_actions' => array(1, 2, 3, 4),
+    'expire_user_front_page' => 1,
+    'expire_file_actions' => array(1, 2),
+    'expire_file_front_page' => 1,
+  );
+  foreach ($defaults as $variable => $values) {
+    $value = is_array($values) ? array() : $values;
+    if (is_array($values)) {
+      foreach ($values as $int) {
+        $value[(string) $int] = (string) $int;
+      }
+    }
+    variable_set($variable, $value);
+  }
+}
+
+/**
+ * Implements hook_uninstall().
+ */
+function acquia_purge_uninstall() {
+  drupal_load('module', 'acquia_purge');
+
+  // Delete all the items within the queue we maintained.
+  $queue = DrupalQueue::get('acquia_purge', TRUE);
+  $queue->deleteQueue();
+
+  // Wipe out state data in the case the user re-enables the module.
+  _acquia_purge_state_wipe();
+}
+
+/**
+ * Implements hook_requirements().
+ */
+function acquia_purge_requirements($phase) {
+  if ($phase == 'runtime') {
+    $requirements = _acquia_purge_get_diagnosis();
+
+    // Remove ACQUIA_PURGE_SEVLEVEL_OK results, they'll be too noisy.
+    foreach ($requirements as $name => $result) {
+      if ($result['severity'] === ACQUIA_PURGE_SEVLEVEL_OK) {
+        unset($requirements[$name]);
+      }
+    }
+
+    // Remove the status test once ERROR level results have been detected.
+    if (!_acquia_purge_are_we_allowed_to_purge()) {
+      unset($requirements['acquia_purge_status']);
+    }
+
+    return $requirements;
+  }
+  return array();
+}
+
+/**
+ * Remove the 'acquia_purge_reportpurges' variable.
+ *
+ * The variable disappeared as of version 7.x-1.0-beta2. Its functionality has
+ * been replaced by the 'purge notification' permission. Which is more granular
+ * and increases simplicity.
+ */
+function acquia_purge_update_7100(&$sandbox) {
+  variable_del('acquia_purge_reportpurges');
+}
+
+/**
+ * Rename variable 'acquia_purge_queue_owner' to 'acquia_purge_queue_owners'.
+ *
+ * Because we are allowing multiple users to trigger purges concurrently as of
+ * version 7.x-1.0-beta2.
+ */
+function acquia_purge_update_7101(&$sandbox) {
+  variable_del('acquia_purge_queue_owner');
+  variable_set('acquia_purge_queue_owners', array());
+}
+
+/**
+ * Remove two variables used for state data instead of configuration.
+ *
+ * As of version 7.x-1.0, these two variables aren't necessary anymore and
+ * were used as frequently changing state data keys. As rightfully explained
+ * on https://www.drupal.org/node/2205015, these shouldn't belong here
+ * anymore. BEWARE, THIS UPDATE CLEARS YOUR QUEUE!
+ */
+function acquia_purge_update_7102(&$sandbox) {
+  variable_del('acquia_purge_queue_counter');
+  variable_del('acquia_purge_queue_owners');
+
+  // As we are losing our old counter and owners state, also clear the queue
+  // as this will otherwise inevitably lead to sites with queue zombies.
+  _acquia_purge_queue_clear();
+}
+
+/**
+ * Rename the 'purge notification' permission into 'purge on-screen'.
+ *
+ * Since version 7.x-1.0, this permission got renamed as its name became
+ * too specific. Before it only reflected on the on-screen purging progress bar
+ * but is now also used for permission to the manual purge form blocks.
+ */
+function acquia_purge_update_7103(&$sandbox) {
+  $admin_rid = variable_get('user_admin_role', 0);
+  $old = 'purge notification';
+  $new = 'purge on-screen';
+
+  // Query the old 'purge notification' permission to rename it to the new one.
+  if ($admin_rid) {
+    $old_permissions = db_select('role_permission', 'r')
+      ->fields('r')
+      ->condition('permission', $old)
+      ->condition('rid', $admin_rid, '!=')
+      ->execute();
+  }
+  else {
+    $old_permissions = db_select('role_permission', 'r')
+    ->fields('r')
+    ->condition('permission', $old)
+    ->execute();
+  }
+  foreach ($old_permissions as $old_permission) {
+    db_update('role_permission')
+      ->fields(array('permission' => $new))
+      ->condition('permission', $old_permission->permission)
+      ->condition('module', $old_permission->module)
+      ->condition('rid', $old_permission->rid)
+      ->execute();
+  }
+
+  // Assign the new role to the site administrator.
+  drupal_static_reset('user_role_permissions');
+  if ($admin_rid) {
+    user_role_grant_permissions($admin_rid, array('purge on-screen'));
+  }
+}
+
+/**
+ * Set 'expire_status', 'expire_debug' and 'expire_include_base_url' correctly.
+ *
+ * Before version 7.x-1.0, these variables were set in a hook_boot()
+ * implementation that did more bad than good, and it turned out to not even
+ * always work (Acquia #137455). Now diagnostics report badly whenever these
+ * settings change as well, so hard-forcing them is no longer needed.
+ */
+function acquia_purge_update_7104(&$sandbox) {
+  variable_set('expire_status', EXPIRE_STATUS_ENABLED_EXTERNAL);
+  variable_set('expire_debug', EXPIRE_DEBUG_DISABLED);
+  variable_set('expire_include_base_url', FALSE);
+}

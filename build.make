@@ -35,22 +35,18 @@ projects[] = search_api_solr
 projects[data_disqus][download][type] = git
 projects[data_disqus][download][url] = git@github.com:NuCivic/data_disqus.git
 projects[data_disqus][download][branch] = master
-includes[data_disqus_make] = https://raw.githubusercontent.com/NuCivic/data_disqus/master/data_disqus.make
 
 projects[data_workflow][download][type] = git
 projects[data_workflow][download][url] = git@github.com:NuCivic/data_workflow.git
 projects[data_workflow][download][branch] = master
-includes[data_workflow_make] = https://raw.githubusercontent.com/NuCivic/data_workflow/master/data_workflow.make
 
 projects[visualization_entity][download][type] = git
 projects[visualization_entity][download][url] = git@github.com:NuCivic/visualization_entity.git
 projects[visualization_entity][download][branch] = master
-includes[visualization_entity_make] = https://raw.githubusercontent.com/NuCivic/visualization_entity/master/visualization_entity.make
 
 projects[visualization_entity_charts][download][type] = git
 projects[visualization_entity_charts][download][url] = git@github.com:NuCivic/visualization_entity_charts.git
 projects[visualization_entity_charts][download][branch] = master
-includes[visualization_entity_charts_make] = https://raw.githubusercontent.com/NuCivic/visualization_entity_charts/master/visualization_entity_charts.make
 
 
 ; Performance

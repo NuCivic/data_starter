@@ -32,18 +32,22 @@ projects[] = search_api_solr
 
 ; DKAN
 ; =====
+projects[data_disqus][type] = module
 projects[data_disqus][download][type] = git
 projects[data_disqus][download][url] = git@github.com:NuCivic/data_disqus.git
 projects[data_disqus][download][branch] = master
 
+projects[data_workflow][type] = module
 projects[data_workflow][download][type] = git
 projects[data_workflow][download][url] = git@github.com:NuCivic/data_workflow.git
 projects[data_workflow][download][branch] = master
 
+projects[visualization_entity][type] = module
 projects[visualization_entity][download][type] = git
 projects[visualization_entity][download][url] = git@github.com:NuCivic/visualization_entity.git
 projects[visualization_entity][download][branch] = master
 
+projects[visualization_entity_charts][type] = module
 projects[visualization_entity_charts][download][type] = git
 projects[visualization_entity_charts][download][url] = git@github.com:NuCivic/visualization_entity_charts.git
 projects[visualization_entity_charts][download][branch] = master

@@ -1,0 +1,12 @@
+name = Acquia Purge
+description = "Top-notch Varnish purging on Acquia Cloud!"
+package = Acquia Network Connector
+core = 7.x
+dependencies[] = expire (>=2.0-rc2)
+
+; Information added by Drupal.org packaging script on 2014-09-08
+version = "7.x-1.1"
+core = "7.x"
+project = "acquia_purge"
+datestamp = "1410166129"
+

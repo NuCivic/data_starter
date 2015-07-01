@@ -66,7 +66,7 @@ projects[] = features_master
 ;projects[] = expire
 ;projects[] = memcache
 ;projects[] = entitycache
-;projects[] = admin_views
+projects[] = admin_views
 
 ; Security
 ; ==========

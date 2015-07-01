@@ -22,7 +22,7 @@ projects[] = features_master
 ;projects[] = devel
 ;projects[] = environment
 ;projects[] = maillog
-;projects[] = shield
+projects[] = shield
 ;projects[] = features_override
 ;projects[] = security_review
 

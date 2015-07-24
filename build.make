@@ -44,8 +44,8 @@ projects[] = features_banish
 ; =====
 projects[data_workflow][type] = module
 projects[data_workflow][download][type] = git
-projects[data_workflow][download][url] = git@github.com:NuCivic/data_workflow.git
-projects[data_workflow][download][branch] = master
+projects[data_workflow][download][url] = git@github.com:rhabbachi/data_workflow.git
+projects[data_workflow][download][branch] = workbench_accordion_improved
 
 
 

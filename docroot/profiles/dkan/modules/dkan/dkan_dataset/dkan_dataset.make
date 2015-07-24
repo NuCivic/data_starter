@@ -21,7 +21,7 @@ includes[recline_make] = https://raw.githubusercontent.com/NuCivic/recline/431ff
 
 ; Contrib Modules
 projects[autocomplete_deluxe][subdir] = contrib
-projects[autocomplete_deluxe][version] = 2.0-beta3
+projects[autocomplete_deluxe][version] = 2.1
 
 projects[beautytips][download][type] = git
 projects[beautytips][download][branch] = 7.x-2.x
@@ -100,7 +100,7 @@ projects[imagecache_actions][download][revision] = cd19d2a
 projects[imagecache_actions][subdir] = contrib
 projects[imagecache_actions][type] = module
 
-projects[jquery_update][version] = 2.3
+projects[jquery_update][version] = 2.6
 projects[jquery_update][subdir] = contrib
 
 projects[libraries][version] = 2.1
@@ -194,7 +194,7 @@ projects[views][subdir] = contrib
 projects[views_responsive_grid][version] = 1.3
 projects[views_responsive_grid][subdir] = contrib
 
-projects[views_bulk_operations][version] = 3.2
+projects[views_bulk_operations][version] = 3.3
 projects[views_bulk_operations][subdir] = contrib
 
 

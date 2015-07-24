@@ -51,8 +51,20 @@ function publishing_workflow_form_alter(&$form, &$form_state, $form_id) {
         $form['options']['sticky']['#type'] = 'hidden';
       }
       break;
+
+    case 'views_form_dataset_ref_resources_page':
+      $form['actions']['submit']['#submit'][] = 'publishing_workflow_vbo_redirect';
+      break;
   }
 }
+
+/**
+ * Submit Callback for views_form_dataset_ref_resources_page form.
+ */
+function publishing_workflow_vbo_redirect($form, &$form_state) {
+  $form_state['redirect'] = array('admin/workbench/needs-review');
+}
+
 /**
  * Implements hook_rules_action_info().
  */

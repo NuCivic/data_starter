@@ -19,3 +19,15 @@ function publishing_workflow_ctools_plugin_api($module = NULL, $api = NULL) {
 function publishing_workflow_views_api($module = NULL, $api = NULL) {
   return array("api" => "3.0");
 }
+
+/**
+ * Implements hook_strongarm_alter().
+ */
+function publishing_workflow_strongarm_alter(&$data) {
+  if (isset($data['node_options_dataset'])) {
+    $data['node_options_dataset']->value[0] = 'moderation'; /* WAS: 'status' */
+  }
+  if (isset($data['node_options_resource'])) {
+    $data['node_options_resource']->value[0] = 'moderation'; /* WAS: 'status' */
+  }
+}

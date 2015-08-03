@@ -1,0 +1,7 @@
+name = dkan_harvest
+description = Harvest data from external sources
+core = 7.x
+
+dependencies[] = 'migrate'
+dependencies[] = 'dkan_migrate_base'
+files[] = dkan_harvest.migrate.inc

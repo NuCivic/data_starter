@@ -1,0 +1,18 @@
+<?php
+
+/**
+ * @file
+ * Install file for hhs_ckan_migrate.
+ */
+
+function dkan_harvest_install() {
+  Migration::deregisterMigration('hhs_ckan_migrate');
+  module_disable(array('hhs_ckan_migrate'));
+}
+
+/**
+ * Implements hook_disable().
+ */
+function dkan_harvest_disable() {
+  Migration::deregisterMigration('dkan_harvest_data_json');
+}

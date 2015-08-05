@@ -150,7 +150,7 @@ Feature: Workbench
     When I expand the "Dataset 04" accordion
     Then I should see "Current Moderation state: Draft"
     When I click "Change to Needs Review"
-  #  Then I should not see "Dataset 04"
+    Then I should not see "Dataset 04"
     And the moderation state of node "Dataset 04" of type "Dataset" should be "Needs review"
 
   @api @javascript @mail

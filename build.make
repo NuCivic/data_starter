@@ -61,7 +61,19 @@ projects[data_workflow][download][type] = git
 projects[data_workflow][download][url] = git@github.com:NuCivic/data_workflow.git
 projects[data_workflow][download][branch] = master
 
+; DKAN HARVEST
+; =====
+projects[dkan_harvest][type] = module
+projects[dkan_harvest][download][type] = git
+projects[dkan_harvest][download][url] = git@github.com:NuCivic/dkan_harvest.git
+projects[dkan_harvest][download][branch] = master
 
+; DKAN MIGRATE BASE
+; =====
+projects[dkan_migrate_base][type] = module
+projects[dkan_migrate_base][download][type] = git
+projects[dkan_migrate_base][download][url] = git@github.com:NuCivic/dkan_migrate_base.git
+projects[dkan_migrate_base][download][branch] = master
 
 ; Performance
 ; ===========

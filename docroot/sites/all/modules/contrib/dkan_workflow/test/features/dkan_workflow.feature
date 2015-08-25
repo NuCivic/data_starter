@@ -7,37 +7,35 @@ Feature: Workbench
       | Needs Review | admin/workbench/needs-review |
       | My drafts    | admin/workbench/drafts       |
     Given users:
-      | name                    | mail                              | roles                     |
-      | datacontributor1        | datacontributor1@test.com         | data contributor          |
-      | contenteditor1          | contenteditor1@test.com           | content editor            |
-      | portaladministrator1    | portaladministrator1@test.com     | portal administrator      |
-      | Katie                   | katie@test.com                    | data contributor          |
-      | Celeste                 | celeste@test.com                  | data contributor          |
-      | Gabriel                 | gabriel@test.com                  | content editor            |
-      | Jaz                     | jaz@test.com                      | data contributor          |
+      | name    | mail             | roles                |
+      | Jeff    | jeff@test.com    | portal administrator |
+      | Gabriel | gabriel@test.com | content editor       |
+      | Katie   | katie@test.com   | data contributor     |
+      | Celeste | celeste@test.com | data contributor     |
+      | Jaz     | jaz@test.com     | data contributor     |
     And "tags" terms:
       | name   |
       | Health |
       | Gov    |
     And datasets:
-      | title      | author                 | moderation    | date         | tags   |
-      | Dataset 01 | datacontributor1       | draft         | Feb 01, 2015 | Health |
-      | Dataset 02 | Gabriel                | published     | Mar 13, 2015 | Gov    |
-      | Dataset 03 | Katie                  | published     | Feb 17, 2013 | Health |
-      | Dataset 04 | Celeste                | draft         | Jun 21, 2015 | Gov    |
-      | Dataset 05 | Katie                  | needs_review  | Jun 21, 2015 | Gov    |
+      | title      | author  | moderation   | date         | tags   |
+      | Dataset 01 | Katie   | draft        | Feb 01, 2015 | Health |
+      | Dataset 02 | Gabriel | published    | Mar 13, 2015 | Gov    |
+      | Dataset 03 | Katie   | published    | Feb 17, 2013 | Health |
+      | Dataset 04 | Celeste | draft        | Jun 21, 2015 | Gov    |
+      | Dataset 05 | Katie   | needs_review | Jun 21, 2015 | Gov    |
     And "Format" terms:
       | name  |
       | csv   |
     And resources:
-    | title       | dataset    | moderation | format |
-    | Resource 01 | Dataset 01 | published  | csv    |
-    | Resource 02 | Dataset 01 | published  | csv    |
-    | Resource 03 | Dataset 02 | published  | csv    |
+      | title        | author  | dataset    | moderation | format |
+      | Resource 041 | Celeste | Dataset 04 | published  | csv    |
+      | Resource 042 | Celeste | Dataset 04 | published  | csv    |
+      | Resource 051 | Katie   | Dataset 05 | published  | csv    |
 
   @api
   Scenario: As a Data Contributor I want to moderate my own Datasets
-    Given I am logged in as "datacontributor1"
+    Given I am logged in as "Katie"
     And I am on "Dataset 01" page
     When I follow "Moderate"
     Then I should see "Needs Review" in the "#edit-state" element
@@ -47,7 +45,7 @@ Feature: Workbench
 
   @api
   Scenario: As a Content Editor I want to Publish datasets posted by a Data Contributor
-    Given I am logged in as "contenteditor1"
+    Given I am logged in as "Gabriel"
     And I am on "Dataset 01" page
     When I follow "Moderate"
     Then I should see "Needs Review" in the "#edit-state" element
@@ -62,7 +60,7 @@ Feature: Workbench
 
   @api
   Scenario: As a Portal Administrator I want to moderate all content
-    Given I am logged in as "portaladministrator1"
+    Given I am logged in as "Jeff"
     And I am on "Dataset 01" page
     When I follow "Moderate"
     Then I should see "Needs Review" in the "#edit-state" element
@@ -87,10 +85,10 @@ Feature: Workbench
     And I should see "Needs review"
     And I should see an ".link-badge" element
 
-  Examples:
-    | role name                 |
-    | portal administrator      |
-    | content editor            |
+    Examples:
+      | role name                 |
+      | portal administrator      |
+      | content editor            |
 
   @api
   Scenario: View 'My workbench' page for "data contributor" role
@@ -118,11 +116,6 @@ Feature: Workbench
     Then I should see "Stale reviews"
     And I should see an ".link-badge" element
 
-
-##################################################################
-# EMAIL NOTIFICATION
-##################################################################
-
   @api @mail
   Scenario: As a Content Editor I want to receive an email notification when "Data Contributor" add a Dataset that "Needs Review".
     Given I am logged in as "Katie"
@@ -147,11 +140,49 @@ Feature: Workbench
     And I should see "Draft --> Needs Review"
     And user Gabriel should receive an email containing "Please review the recent update at"
 
-  @api @mail
+  @api @mail @javascript
   Scenario: Request dataset review (Change dataset status from 'Draft' to 'Needs review')
     Given I am logged in as "Celeste"
-    And I am on "My drafts" page
-    And I should see "Change to Needs Review" in the "Dataset 04" row
-    When I click "Change to Needs Review" in the "Dataset 04" row
-    Then I should see "Needs Review" in the "Dataset 04" row
+    And I follow "My Workbench"
+    And I follow "My drafts"
+    Then I should see "Dataset 04"
+    Given I click "Submit for Review" for "Dataset 04" in the workbench tree
+    Then I should not see "Dataset 04"
+    And the moderation state of node "Dataset 04" of type "Dataset" should be "Needs review"
     And user Gabriel should receive an email containing "Please review the recent update at"
+
+  @api @mail @javascript
+  Scenario: As Content Editor Review Dataset (Change dataset status from 'Needs review' to 'Published')
+    Given I am logged in as "Gabriel"
+    And I follow "My Workbench"
+    And I follow "Needs review"
+    And I should see "Dataset 05"
+    Given I click "Publish" for "Dataset 05" in the workbench tree
+    Then I should not see "Dataset 05"
+    And the moderation state of node "Dataset 05" of type "Dataset" should be "Published"
+    And user Katie should receive an email containing "Please review the recent update at"
+
+  @api @mail @javascript
+  Scenario: Bulk dataset review requests (Change multiple datasets status from 'Draft' to 'Needs review')
+    Given datasets:
+      | title                  | author | moderation | date         | tags   |
+      | Dataset Bulk update 01 | Jaz    | draft      | Feb 01, 2015 | Health |
+      | Dataset Bulk update 02 | Jaz    | draft      | Mar 13, 2015 | Gov    |
+      | Dataset Bulk update 03 | Jaz    | draft      | Feb 17, 2013 | Health |
+    And resources:
+      | title                    | author | dataset                | moderation | format |
+      | Resource Bulk update 011 | Jaz    | Dataset Bulk update 01 | draft  | csv    |
+      | Resource Bulk update 012 | Jaz    | Dataset Bulk update 01 | draft  | csv    |
+      | Resource Bulk update 021 | Jaz    | Dataset Bulk update 02 | draft  | csv    |
+      | Resource Bulk update 022 | Jaz    | Dataset Bulk update 02 | draft  | csv    |
+      | Resource Bulk update 031 | Jaz    | Dataset Bulk update 03 | draft  | csv    |
+      | Resource Bulk update 032 | Jaz    | Dataset Bulk update 03 | draft  | csv    |
+    Given I am logged in as "Jaz"
+    And I follow "My Workbench"
+    And I follow "My drafts"
+    Then the workbench tree should contain 9 elements
+    Given I set all the elements in the workbench tree to "Submit for review"
+    And I wait for '5' seconds
+    Then I should see the success message "Performed Submit for review on 9 items."
+    And the workbench tree should contain 0 elements
+

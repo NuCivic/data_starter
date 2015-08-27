@@ -72,6 +72,7 @@ function views_workflow_list_action_info() {
 
 function views_workflow_list_views_bulk_operations_form_alter(&$form, &$form_state, $vbo) {
   // Workbench Moderation VBO action permissions check
+  // @TODO This is temporary and needs to be moved to the front-end.
   if (strpos($form['#form_id'], 'views_form_workbench_moderation') == 0) {
     $account = $GLOBALS['user'];
     $types = array('dataset', 'resource');

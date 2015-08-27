@@ -1310,11 +1310,19 @@ $handler->display->display_options['fields']['vid']['relationship'] = 'nid';
 $handler->display->display_options['fields']['vid']['group_type'] = 'count_distinct';
 $handler->display->display_options['fields']['vid']['label'] = '';
 $handler->display->display_options['fields']['vid']['element_label_colon'] = FALSE;
+/* Filter criterion: User: Current */
+$handler->display->display_options['filters']['uid_current']['id'] = 'uid_current';
+$handler->display->display_options['filters']['uid_current']['table'] = 'users';
+$handler->display->display_options['filters']['uid_current']['field'] = 'uid_current';
+$handler->display->display_options['filters']['uid_current']['relationship'] = 'uid';
+$handler->display->display_options['filters']['uid_current']['value'] = '1';
+$handler->display->display_options['filters']['uid_current']['group'] = 1;
 /* Filter criterion: Workbench Moderation: Current */
 $handler->display->display_options['filters']['is_current']['id'] = 'is_current';
 $handler->display->display_options['filters']['is_current']['table'] = 'workbench_moderation_node_history';
 $handler->display->display_options['filters']['is_current']['field'] = 'is_current';
 $handler->display->display_options['filters']['is_current']['value'] = '1';
+$handler->display->display_options['filters']['is_current']['group'] = 1;
 /* Filter criterion: Workbench Moderation: State */
 $handler->display->display_options['filters']['state']['id'] = 'state';
 $handler->display->display_options['filters']['state']['table'] = 'workbench_moderation_node_history';
@@ -1322,6 +1330,7 @@ $handler->display->display_options['filters']['state']['field'] = 'state';
 $handler->display->display_options['filters']['state']['value'] = array(
   'needs_review' => 'needs_review',
 );
+$handler->display->display_options['filters']['state']['group'] = 1;
 
 /* Display: My Drafts Badge */
 $handler = $view->new_display('menu_badge', 'My Drafts Badge', 'my_drafts_badge');
@@ -1351,11 +1360,19 @@ $handler->display->display_options['fields']['vid']['relationship'] = 'nid';
 $handler->display->display_options['fields']['vid']['group_type'] = 'count_distinct';
 $handler->display->display_options['fields']['vid']['label'] = '';
 $handler->display->display_options['fields']['vid']['element_label_colon'] = FALSE;
+/* Filter criterion: User: Current */
+$handler->display->display_options['filters']['uid_current']['id'] = 'uid_current';
+$handler->display->display_options['filters']['uid_current']['table'] = 'users';
+$handler->display->display_options['filters']['uid_current']['field'] = 'uid_current';
+$handler->display->display_options['filters']['uid_current']['relationship'] = 'uid';
+$handler->display->display_options['filters']['uid_current']['value'] = '1';
+$handler->display->display_options['filters']['uid_current']['group'] = 1;
 /* Filter criterion: Workbench Moderation: Current */
 $handler->display->display_options['filters']['is_current']['id'] = 'is_current';
 $handler->display->display_options['filters']['is_current']['table'] = 'workbench_moderation_node_history';
 $handler->display->display_options['filters']['is_current']['field'] = 'is_current';
 $handler->display->display_options['filters']['is_current']['value'] = '1';
+$handler->display->display_options['filters']['is_current']['group'] = 1;
 /* Filter criterion: Workbench Moderation: State */
 $handler->display->display_options['filters']['state']['id'] = 'state';
 $handler->display->display_options['filters']['state']['table'] = 'workbench_moderation_node_history';
@@ -1363,6 +1380,7 @@ $handler->display->display_options['filters']['state']['field'] = 'state';
 $handler->display->display_options['filters']['state']['value'] = array(
   'draft' => 'draft',
 );
+$handler->display->display_options['filters']['state']['group'] = 1;
 
 /* Display: Stale Reviews Badge */
 $handler = $view->new_display('menu_badge', 'Stale Reviews Badge', 'stale_reviews_badge');
@@ -1393,11 +1411,19 @@ $handler->display->display_options['fields']['vid']['relationship'] = 'nid';
 $handler->display->display_options['fields']['vid']['group_type'] = 'count_distinct';
 $handler->display->display_options['fields']['vid']['label'] = '';
 $handler->display->display_options['fields']['vid']['element_label_colon'] = FALSE;
+/* Filter criterion: User: Current */
+$handler->display->display_options['filters']['uid_current']['id'] = 'uid_current';
+$handler->display->display_options['filters']['uid_current']['table'] = 'users';
+$handler->display->display_options['filters']['uid_current']['field'] = 'uid_current';
+$handler->display->display_options['filters']['uid_current']['relationship'] = 'uid';
+$handler->display->display_options['filters']['uid_current']['value'] = '1';
+$handler->display->display_options['filters']['uid_current']['group'] = 1;
 /* Filter criterion: Workbench Moderation: Current */
 $handler->display->display_options['filters']['is_current']['id'] = 'is_current';
 $handler->display->display_options['filters']['is_current']['table'] = 'workbench_moderation_node_history';
 $handler->display->display_options['filters']['is_current']['field'] = 'is_current';
 $handler->display->display_options['filters']['is_current']['value'] = '1';
+$handler->display->display_options['filters']['is_current']['group'] = 1;
 /* Filter criterion: Workbench Moderation: State */
 $handler->display->display_options['filters']['state']['id'] = 'state';
 $handler->display->display_options['filters']['state']['table'] = 'workbench_moderation_node_history';
@@ -1405,6 +1431,7 @@ $handler->display->display_options['filters']['state']['field'] = 'state';
 $handler->display->display_options['filters']['state']['value'] = array(
   'needs_review' => 'needs_review',
 );
+$handler->display->display_options['filters']['state']['group'] = 1;
 /* Filter criterion: Workbench Moderation: Timestamp */
 $handler->display->display_options['filters']['stamp']['id'] = 'stamp';
 $handler->display->display_options['filters']['stamp']['table'] = 'workbench_moderation_node_history';
@@ -1412,6 +1439,7 @@ $handler->display->display_options['filters']['stamp']['field'] = 'stamp';
 $handler->display->display_options['filters']['stamp']['operator'] = '<';
 $handler->display->display_options['filters']['stamp']['value']['value'] = '-48 hours';
 $handler->display->display_options['filters']['stamp']['value']['type'] = 'offset';
+$handler->display->display_options['filters']['stamp']['group'] = 1;
 
 /* Display: Stale Drafts Badge */
 $handler = $view->new_display('menu_badge', 'Stale Drafts Badge', 'stale_drafts_badge');
@@ -1442,11 +1470,19 @@ $handler->display->display_options['fields']['vid']['relationship'] = 'nid';
 $handler->display->display_options['fields']['vid']['group_type'] = 'count_distinct';
 $handler->display->display_options['fields']['vid']['label'] = '';
 $handler->display->display_options['fields']['vid']['element_label_colon'] = FALSE;
+/* Filter criterion: User: Current */
+$handler->display->display_options['filters']['uid_current']['id'] = 'uid_current';
+$handler->display->display_options['filters']['uid_current']['table'] = 'users';
+$handler->display->display_options['filters']['uid_current']['field'] = 'uid_current';
+$handler->display->display_options['filters']['uid_current']['relationship'] = 'uid';
+$handler->display->display_options['filters']['uid_current']['value'] = '1';
+$handler->display->display_options['filters']['uid_current']['group'] = 1;
 /* Filter criterion: Workbench Moderation: Current */
 $handler->display->display_options['filters']['is_current']['id'] = 'is_current';
 $handler->display->display_options['filters']['is_current']['table'] = 'workbench_moderation_node_history';
 $handler->display->display_options['filters']['is_current']['field'] = 'is_current';
 $handler->display->display_options['filters']['is_current']['value'] = '1';
+$handler->display->display_options['filters']['is_current']['group'] = 1;
 /* Filter criterion: Workbench Moderation: State */
 $handler->display->display_options['filters']['state']['id'] = 'state';
 $handler->display->display_options['filters']['state']['table'] = 'workbench_moderation_node_history';
@@ -1454,6 +1490,7 @@ $handler->display->display_options['filters']['state']['field'] = 'state';
 $handler->display->display_options['filters']['state']['value'] = array(
   'needs_review' => 'needs_review',
 );
+$handler->display->display_options['filters']['state']['group'] = 1;
 /* Filter criterion: Workbench Moderation: Timestamp */
 $handler->display->display_options['filters']['stamp']['id'] = 'stamp';
 $handler->display->display_options['filters']['stamp']['table'] = 'workbench_moderation_node_history';
@@ -1461,4 +1498,5 @@ $handler->display->display_options['filters']['stamp']['field'] = 'stamp';
 $handler->display->display_options['filters']['stamp']['operator'] = '<';
 $handler->display->display_options['filters']['stamp']['value']['value'] = '-72 hours';
 $handler->display->display_options['filters']['stamp']['value']['type'] = 'offset';
+$handler->display->display_options['filters']['stamp']['group'] = 1;
 

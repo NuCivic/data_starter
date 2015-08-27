@@ -47,6 +47,38 @@ function publishing_workflow_strongarm() {
         'view_display_id' => 'stale_reviews_badge',
       ),
     ),
+    'admin/workbench/drafts-active' => array(
+      'callback' => 'menu_badges_execute_view',
+      'key' => 'views_workbench_moderation_my_drafts_badge',
+      'arguments' => array(
+        'view_name' => 'workbench_moderation',
+        'view_display_id' => 'my_drafts_badge',
+      ),
+    ),
+    'admin/workbench/drafts-stale' => array(
+      'callback' => 'menu_badges_execute_view',
+      'key' => 'views_workbench_moderation_stale_drafts_badge',
+      'arguments' => array(
+        'view_name' => 'workbench_moderation',
+        'view_display_id' => 'stale_drafts_badge',
+      ),
+    ),
+    'admin/workbench/needs-review-stale' => array(
+      'callback' => 'menu_badges_execute_view',
+      'key' => 'views_workbench_moderation_stale_reviews_badge',
+      'arguments' => array(
+        'view_name' => 'workbench_moderation',
+        'view_display_id' => 'stale_reviews_badge',
+      ),
+    ),
+    'admin/workbench/needs-review-active' => array(
+      'callback' => 'menu_badges_execute_view',
+      'key' => 'views_workbench_moderation_needs_review_badge',
+      'arguments' => array(
+        'view_name' => 'workbench_moderation',
+        'view_display_id' => 'needs_review_badge',
+      ),
+    ),
   );
   $export['menu_badges_tab_callbacks'] = $strongarm;
 

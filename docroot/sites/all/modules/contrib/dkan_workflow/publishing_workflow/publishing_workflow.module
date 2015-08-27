@@ -36,34 +36,6 @@ function publishing_workflow_permission() {
   );
 }
 
-/**
- * Implements hook_form_alter().
- */
-function publishing_workflow_form_alter(&$form, &$form_state, $form_id) {
-  global $user;
-  switch ($form_id) {
-    case 'resource_node_form':
-    case 'dataset_node_form':
-      $roles = array_keys($user->roles);
-      $is_editor = in_array('254633039', $roles);
-      $is_portal_admin = in_array('27274083', $roles);
-      $is_administrator = $user->uid == 1;
-      $node = $form['#node'];
-      // Change published status only for new nodes.
-      if (!isset($node->nid)) {
-      	$status = $is_portal_admin || $is_editor || $is_administrator ? 1 : 0;
-        $form['options']['status']['#default_value'] = $status;
-      }
-
-      // Hide promote and sticky options for content editor.
-      if ($is_editor) {
-        $form['options']['promote']['#type'] = 'hidden';
-        $form['options']['sticky']['#type'] = 'hidden';
-      }
-      break;
-  }
-}
-
 function publishing_workflow_block_info_alter(&$blocks, $theme, $code_blocks) {
   if ($blocks['workbench']['block']['region'] == 'content') {
     $blocks['workbench']['block']['status'] = 0;

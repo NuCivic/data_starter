@@ -11,7 +11,8 @@
   font-size: 80%;
   line-height: 1.0em;
   margin-top: -0.75em;
-  font-family:  "Lucida Grande","Lucida Sans Unicode",sans-serif;
+  font-family: "Lucida Grande","Lucida Sans Unicode", sans-serif;
+  border: 1px solid #005489;
 }
 .link-badge-badge-wrapper {
   position: relative;
@@ -30,20 +31,16 @@ ul.action-links li {
   display: inline-block;
   margin-top: -10px;
 }
-
 @-moz-document url-prefix() {
   .link-badge {
     font-size: 85%;
     padding: 4px 6px 4px 6px;
   }
 }
-
 .page-admin-workbench .nav-pills > li + li {
     margin-left: 5px;
 }
-
 .page-admin-workbench  li.active .link-badge {
    background: #fff;
    color: #005489;
-   border: 1px solid #005489;
 }

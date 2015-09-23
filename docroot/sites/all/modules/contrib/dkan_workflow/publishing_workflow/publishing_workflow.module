@@ -1,0 +1,46 @@
+<?php
+/**
+ * @file
+ * Code for the NuCivic workflow feature.
+ */
+
+include_once 'publishing_workflow.features.inc';
+
+/**
+ * Implements hook_menu_alter().
+ */
+function publishing_workflow_menu_alter(&$items) {
+  // Hide the default workbench_content screen because it duplicates functionality
+  $items['admin/workbench']['page callback'] = 'workbench_create';
+  $items['admin/workbench/content']['page callback'] = 'workbench_create';
+  unset($items['admin/workbench/create']);
+}
+
+/**
+ * Implements hook_permission().
+ */
+function publishing_workflow_permission() {
+  return array(
+    'access unpublished data' => array(
+      'title' => t('Access Unpublished Data'),
+      'description' => t('Grant access to unpublished data page.'),
+    ),
+    'access stale reviews page' => array(
+      'title' => t('Access Stale Reviews Page'),
+      'description' => t('Grant access to stale reviews page.'),
+    ),
+    'access stale drafts page' => array(
+      'title' => t('Access Stale Drafts Page'),
+      'description' => t('Grant access to stale drafts page.'),
+    ),
+  );
+}
+
+/**
+ * Implements hook_css_alter().
+ */
+function publishing_workflow_css_alter(&$css) {
+  if (isset($css['sites/all/modules/contrib/link_badges/link_badges.css'])) {
+    $css['sites/all/modules/contrib/link_badges/link_badges.css']['data'] = drupal_get_path('module', 'publishing_workflow') . '/css/link_badges_custom.css';
+  }
+}

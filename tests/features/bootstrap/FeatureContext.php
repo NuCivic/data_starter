@@ -36,8 +36,8 @@ class FeatureContext extends RawDrupalContext implements SnippetAcceptingContext
    ******************************/
 
   /**
-  * @AfterStep
-  */
+   * @AfterStep
+   */
   public function debugStepsAfter(AfterStepScope $scope)
   {
     // Tests tagged with @debugEach will perform each step and wait for [ENTER] to proceed.
@@ -72,12 +72,12 @@ class FeatureContext extends RawDrupalContext implements SnippetAcceptingContext
   /**
    * @BeforeScenario
    */
-   public function registerScenario(BeforeScenarioScope $scope) {
-     // Scenario not usually available to steps, so we do ourselves.
-     // See issue
-     $this->scenario = $scope->getScenario();
-     //print  $this->scenario->getTitle();
-   }
+  public function registerScenario(BeforeScenarioScope $scope) {
+    // Scenario not usually available to steps, so we do ourselves.
+    // See issue
+    $this->scenario = $scope->getScenario();
+    //print  $this->scenario->getTitle();
+  }
 
   /**
    * @BeforeScenario @mail
@@ -109,11 +109,11 @@ class FeatureContext extends RawDrupalContext implements SnippetAcceptingContext
    * HELPER FUNCTIONS
    ****************************/
 
-/**
- * Add page to context.
- *
- * @param $page
- */
+  /**
+   * Add page to context.
+   *
+   * @param $page
+   */
   public function addPage($page) {
     $this->pages[$page['title']] = $page;
   }
@@ -154,17 +154,17 @@ class FeatureContext extends RawDrupalContext implements SnippetAcceptingContext
    */
   private function getMembershipStatusByName($name) {
     switch($name) {
-      case 'Active':
-        return OG_STATE_ACTIVE;
-        break;
-      case 'Pending':
-        return OG_STATE_PENDING;
-        break;
-      case 'Blocked':
-        return OG_STATE_BLOCKED;
-        break;
-      default:
-        break;
+    case 'Active':
+      return OG_STATE_ACTIVE;
+      break;
+    case 'Pending':
+      return OG_STATE_PENDING;
+      break;
+    case 'Blocked':
+      return OG_STATE_BLOCKED;
+      break;
+    default:
+      break;
     }
 
     return FALSE;
@@ -205,6 +205,71 @@ class FeatureContext extends RawDrupalContext implements SnippetAcceptingContext
       }
     }
     return FALSE;
+  }
+
+  /**
+   * Update the node revision author with a db query.
+   *
+   * @param $node node id to be updated.
+   * @param $vid revision id to be updated. Default to NULL to update the
+   * latest revision.
+   * @param $uid user id to use a revision author.
+   */
+  public function setNodeRevUid($nid, $uid, $vid = NULL) {
+    if($vid == NULL){
+      // Get the latest node vid
+      $query = db_select('node_revision', 'nr')
+        ->condition('nid', $nid, '=');
+
+      $query = $query->extend('PagerDefault')->extend('TableSort');
+
+      $result = $query->fields('nr', array('vid'))
+        ->orderBy('vid', 'DESC')
+        ->limit(1)
+        ->execute();
+
+      $resultAssoc = $result->fetchAssoc();
+      if(!isset($resultAssoc['vid'])) {
+        throw new Exception(sprintf("Failde to find latest node revision."));
+      }
+
+      db_update('node_revision')
+        ->fields(array(
+          'uid' => $uid,
+          'log' => 'Updated from Behat'
+        ))
+        ->condition('nid', $nid, '=')
+        ->condition('vid', $resultAssoc['vid'], '=')
+        ->execute();
+
+    } else {
+      db_update('node_revision')
+        ->fields(array(
+          'uid' => $uid,
+          'log' => 'Updated from Behat'
+        ))
+        ->condition('nid', $nid, '=')
+        ->condition('vid', $vid, '=')
+        ->execute();
+    }
+  }
+
+  /**
+   * Update the node revision author with a db query.
+   *
+   * @param $node node id to be updated.
+   * @param $vid revision id to be updated. Default to NULL to update the
+   * latest revision.
+   * @param $uid user id to use a revision author.
+   */
+  public function setNodeRevUidAll($nid, $uid) {
+    db_update('node_revision')
+      ->fields(array(
+        'uid' => $uid,
+        'log' => 'Updated from Behat'
+      ))
+      ->condition('nid', $nid, '=')
+      ->execute();
   }
 
   /*****************************
@@ -384,6 +449,8 @@ class FeatureContext extends RawDrupalContext implements SnippetAcceptingContext
    */
   public function addDatasets(TableNode $datasetsTable)
   {
+    global $user;
+
     // Map readable field names to drupal field names.
     $field_map = array(
       'author' => 'author',
@@ -412,10 +479,13 @@ class FeatureContext extends RawDrupalContext implements SnippetAcceptingContext
         if(!isset($field_map[$key])) {
           throw new Exception(sprintf("Dataset's field %s doesn't exist, or hasn't been mapped. See FeatureContext::addDatasets for mappings.", $key));
         } else if($key == 'author') {
-          $user = user_load_by_name($value);
-          if($user) {
+          $author = user_load_by_name($value);
+          if($author) {
+            $user = $author;
             $drupal_field = $field_map[$key];
             $node->$drupal_field = $user->uid;
+            $node->revision_uid = $user->uid;
+            $node->log = "Updated from Behat addResources";
           }
 
         } else if($key == 'tags' || $key == 'publisher') {
@@ -450,6 +520,7 @@ class FeatureContext extends RawDrupalContext implements SnippetAcceptingContext
       // Requires this patch https://www.drupal.org/node/2393771
       workbench_moderation_moderate($created_node, $workbench_moderation_state, $created_node->uid);
 
+      $user = user_load(0);
       // Add the created node to the datasets array.
       $this->datasets[$created_node->nid] = $created_node;
 
@@ -462,66 +533,11 @@ class FeatureContext extends RawDrupalContext implements SnippetAcceptingContext
   }
 
   /**
-   * @Then I should see :arg1 items in the :arg2 region
-   */
-  public function iShouldSeeItemsInTheRegion($arg1, $arg2)
-  {
-    throw new PendingException();
-  }
-
-  /**
-   * @Then I should see the :arg1 detail page
-   */
-  public function iShouldSeeTheDetailPage($arg1)
-  {
-    throw new PendingException();
-  }
-
-  /**
-   * @When I fill in the :arg1 form for :arg2
-   */
-  public function iFillInTheFormFor($arg1, $arg2)
-  {
-    throw new PendingException();
-  }
-
-  /**
-   * @Then I should see the list of permissions for the group
-   */
-  public function iShouldSeeTheListOfPermissionsForTheGroup()
-  {
-    throw new PendingException();
-  }
-
-  /**
-   * @Then I should see the list of roles for the group
-   */
-  public function iShouldSeeTheListOfRolesForTheGroup()
-  {
-    throw new PendingException();
-  }
-
-  /**
-   * @Then I should see the list of permissions for :arg1 role
-   */
-  public function iShouldSeeTheListOfPermissionsForRole($arg1)
-  {
-    throw new PendingException();
-  }
-
-  /**
-   * @Then I should see :arg1 field
-   */
-  public function iShouldSeeField($arg1)
-  {
-    throw new PendingException();
-  }
-
-  /**
    * @Given resources:
    */
   public function addResources(TableNode $resourcesTable)
   {
+    global $user;
     // Map readable field names to drupal field names.
     $field_map = array(
       'title' => 'title',
@@ -536,13 +552,15 @@ class FeatureContext extends RawDrupalContext implements SnippetAcceptingContext
 
     // Default to draft moderation state.
     $workbench_moderation_state = 'draft';
+    $dataset_ref = FALSE;
 
     foreach ($resourcesTable as $resourceHash) {
-      $node = new stdClass();
-      $node->type = 'resource';
+      $node_presave = new stdClass();
 
       // Defaults
-      $node->language = LANGUAGE_NONE;
+      $node_presave->type = 'resource';
+      $node_presave->language = LANGUAGE_NONE;
+      $node_presave->is_new = TRUE;
 
       foreach($resourceHash as $key => $value) {
         $drupal_field = $field_map[$key];
@@ -551,24 +569,28 @@ class FeatureContext extends RawDrupalContext implements SnippetAcceptingContext
           throw new Exception(sprintf("Resource's field %s doesn't exist, or hasn't been mapped. See FeatureContext::addDatasets for mappings.", $key));
 
         } else if($key == 'author') {
-          $user = user_load_by_name($value);
-          if(!isset($user)) {
-            $value = $user->uid;
+          $author = user_load_by_name($value);
+          if($author) {
+            $user = $author;
+            $drupal_field = $field_map[$key];
+            $node_presave->$drupal_field = $user->uid;
+            $node_presave->revision_uid = $user->uid;
+            $node_presave->log = "Updated from Behat addResources";
+
+          } else {
+            throw new Exception(sprintf("Username" . $value . " not found."));
           }
-          $drupal_field = $field_map[$key];
-          $node->$drupal_field = $value;
 
         } elseif ($key == 'format') {
           $value = $this->explode_list($value);
-          $node->{$drupal_field} = $value;
+          $node_presave->{$drupal_field} = $value;
 
         } elseif ($key == 'dataset') {
-          if( $nid = $this->getNidByTitle($value, 'dataset')) {
-            $node->{$drupal_field}['und'][0]['target_id'] = $nid;
-          }else {
+          if($nid = $this->getNidByTitle($value, 'dataset')) {
+            $dataset_ref = $nid;
+          } else {
             throw new Exception(sprintf("Dataset node not found."));
           }
-
         } else if($key == 'moderation') {
           // No need to define 'Draft' state as it is used as default.
           $workbench_moderation_state = $value;
@@ -576,107 +598,34 @@ class FeatureContext extends RawDrupalContext implements SnippetAcceptingContext
         } else {
           // Default behavior.
           // PHP 5.4 supported notation.
-          $node->{$drupal_field} = $value;
+          $node_presave->{$drupal_field} = $value;
         }
       }
 
-      $created_node = $this->getDriver()->createNode($node);
+      $node_created = $this->getDriver()->createNode($node_presave);
 
-      // Make the node author as the revision author.
-      // This is needed for workbench views filtering.
-      $created_node->log = $created_node->uid;
-      $created_node->revision_uid = $created_node->uid;
-      db_update('node_revision')
-        ->fields(array(
-          'uid' => $created_node->uid,
-        ))
-        ->condition('nid', $created_node->nid, '=')
-        ->execute();
+      if($dataset_ref) {
+        $node_created->field_dataset_ref[$node_created->language][]['target_id'] = $dataset_ref;
+        node_save($node_created);
+        $this->setNodeRevUidAll($node_created->nid, $node_created->uid);
+        $this->setNodeRevUid($dataset_ref, $node_created->uid);
+      }
 
       // Manage moderation state.
-      workbench_moderation_moderate($created_node, $workbench_moderation_state);
+      // Make the node author as the revision author.
+      // This is needed for workbench views filtering.
+      workbench_moderation_moderate($node_created, $workbench_moderation_state, $node_created->uid);
 
+      $user = user_load(0);
       // Add the created node to the datasets array.
-      $this->resources[$created_node->nid] = $created_node;
+      $this->resources[$node_created->nid] = $node_created;
 
       // Add the url to the page array for easy navigation.
       $this->addPage(array(
-        'title' => $created_node->title,
-        'url' => '/node/' . $created_node->nid
+        'title' => $node_created->title,
+        'url' => '/node/' . $node_created->nid
       ));
     }
-  }
-
-  /**
-   * @Then I should see the list with :arg1 order by :arg2
-   */
-  public function iShouldSeeTheListWithOrderBy($arg1, $arg2)
-  {
-    throw new PendingException();
-  }
-
-  /**
-   * @Then I should see :arg1 detail page
-   */
-  public function iShouldSeeDetailPage($arg1)
-  {
-    throw new PendingException();
-  }
-
-  /**
-   * @Then I should be redirected to :arg1 sharing page for :arg2
-   */
-  public function iShouldBeRedirectedToSharingPageFor($arg1, $arg2)
-  {
-    throw new PendingException();
-  }
-
-  /**
-   * @Then I should see the content in :arg1 format
-   */
-  public function iShouldSeeTheContentInFormat($arg1)
-  {
-    throw new PendingException();
-  }
-
-  /**
-   * @When I press :arg1 in the :arg2 row
-   */
-  public function iPressInTheRow($arg1, $arg2)
-  {
-    throw new PendingException();
-  }
-
-  /**
-   * @Then A file should be downloaded
-   */
-  public function aFileShouldBeDownloaded()
-  {
-    throw new PendingException();
-  }
-
-  /**
-   * @Then I should be able to see the :arg1 detail page
-   */
-  public function iShouldBeAbleToSeeTheDetailPage($arg1)
-  {
-    throw new PendingException();
-  }
-
-  /**
-   * @Then I should see :arg1 as :arg2 in the :arg3 row
-   */
-  public function iShouldSeeAsInTheRow($arg1, $arg2, $arg3)
-  {
-    throw new PendingException();
-  }
-
-  /**
-   * @Then I should see a list of unpublished datasets owned by :arg1
-   */
-  public function iShouldSeeAListOfUnpublishedDatasetsOwnedBy($arg1)
-  {
-    throw new PendingException();
   }
 
   /**
@@ -728,14 +677,6 @@ class FeatureContext extends RawDrupalContext implements SnippetAcceptingContext
   }
 
   /**
-   * @Then all :username should receive an email
-   */
-  public function allShouldReceiveAnEmail($username)
-  {
-    throw new PendingException();
-  }
-
-  /**
    * @Then the :emailAddress should recieve an email containing :content
    */
   public function theEmailAddressShouldRecieveAnEmailContaining($emailAddress, $content)
@@ -758,51 +699,58 @@ class FeatureContext extends RawDrupalContext implements SnippetAcceptingContext
   }
 
   /**
-   * @Then I should view the :arg1 content as :arg2
+   * @Given I wait for :seconds seconds
    */
-  public function iShouldViewTheContentAs($arg1, $arg2)
+  public function iWaitForSeconds($seconds)
   {
-    throw new PendingException();
+    $session = $this->getSession();
+    $session->wait($seconds * 1000);
   }
 
   /**
-   * @Then I should see the list of revisions
+   * Properly expand jquery accordion using the webdriver via xpath.
+   *
+   * @Given I expand the :title accordion
    */
-  public function iShouldSeeTheListOfRevisions()
+  public function iExpandtheaccordion($title)
   {
-    throw new PendingException();
+    $session = $this->getSession();
+    $page = $session->getPage();
+    $accordionElement = $page->find('xpath', '//a[contains(text(), "' . $title . '")]');
+    $accordionElement->click();
+    $session->wait(2000);
   }
 
   /**
-   * @When I select :arg1
+   * Check the moderation state for a node of a certain type.
+   *
+   * @Then the moderation state of node :title of type :type should be :state
    */
-  public function iSelect($arg1)
+  public function moderationStateShouldBe($title, $type, $state)
   {
-    throw new PendingException();
-  }
+    $states = array(
+      'Draft' => 'draft',
+      'Needs review' => 'needs_review',
+      'Published' => 'published',
+    );
 
-  /**
-   * @Then I should see the revisions diff
-   */
-  public function iShouldSeeTheRevisionsDiff()
-  {
-    throw new PendingException();
-  }
+    $types = array(
+      'Dataset' => 'dataset',
+      'Resource' => 'resource',
+    );
 
-  /**
-   * @Then I should see :arg1 resources
-   */
-  public function iShouldSeeResources($arg1)
-  {
-    throw new PendingException();
-  }
-
-  /**
-   * @When I wait
-   */
-  public function iWait()
-  {
-    throw new PendingException();
+    if (!$nid = $this->getNidByTitle($title, $types[$type])){
+      throw new Exception(sprintf("Node with title " . $title . " and of type "
+        . $type . " not found."));
+    } else {
+      $node = node_load($nid);
+      $node_current = workbench_moderation_node_current_load($node);
+      $state_current = $node_current->workbench_moderation['current']->state;
+      if ($state_current != $states[$state]){
+        throw new Exception(sprintf("Node with title " . $title . " and of type
+          " . $type . " does not have " . $state . " moderation state."));
+      }
+    }
   }
 
   /**
@@ -901,4 +849,173 @@ class FeatureContext extends RawDrupalContext implements SnippetAcceptingContext
   {
     throw new PendingException();
   }
+
+  /**
+   * @Then I should view the :arg1 content as :arg2
+   */
+  public function iShouldViewTheContentAs($arg1, $arg2)
+  {
+    throw new PendingException();
+  }
+
+  /**
+   * @Then I should see the list of revisions
+   */
+  public function iShouldSeeTheListOfRevisions()
+  {
+    throw new PendingException();
+  }
+
+  /**
+   * @When I select :arg1
+   */
+  public function iSelect($arg1)
+  {
+    throw new PendingException();
+  }
+
+  /**
+   * @Then I should see the revisions diff
+   */
+  public function iShouldSeeTheRevisionsDiff()
+  {
+    throw new PendingException();
+  }
+
+  /**
+   * @Then I should see :arg1 resources
+   */
+  public function iShouldSeeResources($arg1)
+  {
+    throw new PendingException();
+  }
+
+  /**
+   * @Then I should see the list with :arg1 order by :arg2
+   */
+  public function iShouldSeeTheListWithOrderBy($arg1, $arg2)
+  {
+    throw new PendingException();
+  }
+
+  /**
+   * @Then I should see :arg1 detail page
+   */
+  public function iShouldSeeDetailPage($arg1)
+  {
+    throw new PendingException();
+  }
+
+  /**
+   * @Then I should be redirected to :arg1 sharing page for :arg2
+   */
+  public function iShouldBeRedirectedToSharingPageFor($arg1, $arg2)
+  {
+    throw new PendingException();
+  }
+
+  /**
+   * @Then I should see the content in :arg1 format
+   */
+  public function iShouldSeeTheContentInFormat($arg1)
+  {
+    throw new PendingException();
+  }
+
+  /**
+   * @When I press :arg1 in the :arg2 row
+   */
+  public function iPressInTheRow($arg1, $arg2)
+  {
+    throw new PendingException();
+  }
+
+  /**
+   * @Then A file should be downloaded
+   */
+  public function aFileShouldBeDownloaded()
+  {
+    throw new PendingException();
+  }
+
+  /**
+   * @Then I should be able to see the :arg1 detail page
+   */
+  public function iShouldBeAbleToSeeTheDetailPage($arg1)
+  {
+    throw new PendingException();
+  }
+
+  /**
+   * @Then I should see :arg1 as :arg2 in the :arg3 row
+   */
+  public function iShouldSeeAsInTheRow($arg1, $arg2, $arg3)
+  {
+    throw new PendingException();
+  }
+
+  /**
+   * @Then I should see a list of unpublished datasets owned by :arg1
+   */
+  public function iShouldSeeAListOfUnpublishedDatasetsOwnedBy($arg1)
+  {
+    throw new PendingException();
+  }
+
+  /**
+   * @Then I should see :arg1 items in the :arg2 region
+   */
+  public function iShouldSeeItemsInTheRegion($arg1, $arg2)
+  {
+    throw new PendingException();
+  }
+
+  /**
+   * @Then I should see the :arg1 detail page
+   */
+  public function iShouldSeeTheDetailPage($arg1)
+  {
+    throw new PendingException();
+  }
+
+  /**
+   * @When I fill in the :arg1 form for :arg2
+   */
+  public function iFillInTheFormFor($arg1, $arg2)
+  {
+    throw new PendingException();
+  }
+
+  /**
+   * @Then I should see the list of permissions for the group
+   */
+  public function iShouldSeeTheListOfPermissionsForTheGroup()
+  {
+    throw new PendingException();
+  }
+
+  /**
+   * @Then I should see the list of roles for the group
+   */
+  public function iShouldSeeTheListOfRolesForTheGroup()
+  {
+    throw new PendingException();
+  }
+
+  /**
+   * @Then I should see the list of permissions for :arg1 role
+   */
+  public function iShouldSeeTheListOfPermissionsForRole($arg1)
+  {
+    throw new PendingException();
+  }
+
+  /**
+   * @Then I should see :arg1 field
+   */
+  public function iShouldSeeField($arg1)
+  {
+    throw new PendingException();
+  }
+
 }

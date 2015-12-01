@@ -44,6 +44,7 @@ dependencies[] = facetapi_bonus
 dependencies[] = features
 dependencies[] = field_group_table
 dependencies[] = field_group
+dependencies[] = field_reference_delete
 dependencies[] = gravatar
 dependencies[] = honeypot
 dependencies[] = link_iframe_formatter
@@ -91,6 +92,7 @@ dependencies[] = views_ui
 dependencies[] = views_bulk_operations
 dependencies[] = visualization_entity
 dependencies[] = visualization_entity_charts
+dependencies[] = visualization_entity_embed
 
 ; Open data
 dependencies[] = entity_rdf

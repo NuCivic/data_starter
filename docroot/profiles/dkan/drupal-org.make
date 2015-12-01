@@ -51,6 +51,7 @@ projects[bueditor][patch][1931862] = http://drupal.org/files/dont-render-buedito
 
 projects[colorizer][version] = 1.7
 projects[colorizer][patch][2227651] = https://www.drupal.org/files/issues/colorizer-add-rgb-vars-2227651-4b.patch
+projects[colorizer][patch][2599298] = https://www.drupal.org/files/issues/colorizer-bug_system_cron_delete_current_css-2599298-2.patch
 
 projects[conditional_styles][version] = 2.2
 
@@ -151,6 +152,11 @@ projects[nuboot_radix][type] = theme
 
 projects[radix][type] = theme
 projects[radix][version] = 3.0-rc4
+
+projects[field_reference_delete][download][version] = 7.x-1.0-beta1
+
+; Apply a patch to ref_field (included elsewhere?)
+projects[ref_field][patch][1] = patches/ref_field_sync-entity-load-multiple-1928680-1.patch
 
 ; Libraries
 libraries[font_awesome][type] = libraries

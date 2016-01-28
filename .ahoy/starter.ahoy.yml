@@ -1,0 +1,31 @@
+ahoyapi: v1
+usage: Data Starter cli app for development using ahoy.
+commands:
+
+  drush:
+    usage: Run drush via ahoy (helpful for abstraction)
+    cmd: ahoy cmd-proxy drush --root=docroot {{args}}
+
+# Utility / Experimental commands that are currently hidden
+  confirm:
+    cmd: ahoy -f data-starter/docroot/profiles/dkan/.ahoy/utils.ahoy.yml confirm {{args}}
+    hide: true
+
+  docker:
+    usage: A series of docker commands for dkan development (experimental)
+    import: data-starter/docroot/profiles/dkan/.ahoy/docker.ahoy.yml
+    hide: true
+
+  init:
+    cmd: echo "ahoy.yml file already exists."
+    hide: true
+
+  cmd-proxy:
+    usage: abstraction for commmands.
+    cmd: |
+      if [ "$AHOY_CMD_PROXY" == "DOCKER" ]; then
+        ahoy docker exec "{{args}}"
+      else
+        {{args}}
+      fi
+    hide: true

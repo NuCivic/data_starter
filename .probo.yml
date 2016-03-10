@@ -23,8 +23,21 @@ steps:
       echo "-------> Setup the settings.local.php file and install a fresh database."
       echo ""
       # Setup the database.
-      ahoy site setup --db-user=root --db-pass=strongpassword --db-host=127.0.0.1 --db-port=3306 --db-name=dkan
-      ahoy site reinstall
+      $DB_HOST="127.0.0.1"
+      $DB_USER="root"
+      $DB_PORT="3306"
+      $DB_NAME="dkan"
+      $DB_PASS="strongpassword"
+      sed  \
+        -e s/#DB_HOST/$DB_HOST/g \
+        -e s/#DB_USER/$DB_USER/g \
+        -e s/#DB_PASS/$DB_PASS/g \
+        -e s/#DB_PORT/$DB_PORT/g \
+        -e s/#DB_NAME/$DB_NAME/g \
+        assets/sites/default/settings.local.demo.php > assets/sites/default/settings.local.php
+      ahoy dkan reinstall
+      ahoy drush -y en custom_config environment devinci
+      ahoy drush env-switch --force local
 
       echo ""
       echo "-------> Symlink ./docroot to var/www/html:"
